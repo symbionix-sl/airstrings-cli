@@ -70,8 +70,9 @@ func (c *Client) CreateString(req CreateStringRequest) (*StringEntry, error) {
 }
 
 type UpsertStringRequest struct {
-	Format string             `json:"format,omitempty"`
-	Values map[string]*string `json:"values"`
+	Format    string             `json:"format,omitempty"`
+	SectionID *string            `json:"section_id,omitempty"`
+	Values    map[string]*string `json:"values"`
 }
 
 func (c *Client) UpsertString(key string, req UpsertStringRequest) (*StringEntry, error) {
@@ -82,6 +83,23 @@ func (c *Client) UpsertString(key string, req UpsertStringRequest) (*StringEntry
 
 func (c *Client) DeleteString(key string) error {
 	return c.do("DELETE", c.envPath()+"/strings/"+key, nil, nil, nil)
+}
+
+// ListAllStrings paginates through all strings matching the given options.
+func (c *Client) ListAllStrings(opts ListStringsOpts) ([]StringEntry, error) {
+	var all []StringEntry
+	for {
+		list, err := c.ListStrings(opts)
+		if err != nil {
+			return nil, err
+		}
+		all = append(all, list.Data...)
+		if !list.Pagination.HasMore {
+			break
+		}
+		opts.Cursor = list.Pagination.NextCursor
+	}
+	return all, nil
 }
 
 // Sections

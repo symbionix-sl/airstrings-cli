@@ -1,5 +1,6 @@
 # Binary
 /airstrings
+/airstrings-mcp
 *.exe
 
 # OS

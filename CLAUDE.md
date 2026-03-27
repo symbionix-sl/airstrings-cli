@@ -15,16 +15,24 @@ Config: `~/.airstrings/config.json` — multi-profile, auto-detected project/env
 
 ```
 cmd/airstrings/main.go     # CLI entry point, command routing, all handlers
+cmd/airstrings-mcp/        # MCP server (JSON-RPC 2.0 over stdio)
+  main.go                  # Server loop, stdin/stdout protocol
+  protocol.go              # JSON-RPC + MCP types
+  tools.go                 # Tool definitions and handlers
 internal/
   client/                   # HTTP API client (zero external deps)
     client.go               # Base client, request/response, error handling
     projects.go             # Project, environment, locale, bundle operations
-    strings.go              # String CRUD, sections
+    strings.go              # String CRUD, sections, ListAllStrings
     imports.go              # CSV import, status polling
   config/                   # Profile and config management (~/.airstrings/)
     config.go               # Load/save/active profile
   output/                   # Terminal output (table, JSON, errors)
     output.go               # Table via tabwriter, JSON mode, Success/Errorf
+  workspace/                # Local workspace management (.airstrings/ folder)
+    csv.go                  # Pure CSV read/write/edit operations
+    workspace.go            # Init, Find, LoadConfig, DetectMode
+    sync.go                 # Push/pull (bridges local CSVs and API client)
 ```
 
 All command handlers live in `main.go`. No command framework — plain `switch` on `os.Args`. This is intentional; do not introduce cobra, urfave/cli, or similar.
@@ -78,6 +86,44 @@ When adding a new command:
 - Success messages prefixed with `✓`
 - Error messages go to stderr, then `os.Exit(1)` — no error returns from handlers
 
+### Workspace
+
+Local workspace for AI-friendly string management. Initialized via `airstrings init`.
+
+```
+.airstrings/                  # Created by `airstrings init` in project root
+  config.json                 # Project-local config (profile ref, project/env IDs)
+  strings.csv                 # Unsectioned strings (flat mode)
+  home/home.csv               # Section "home" strings
+  login/login.csv             # Section "login" strings
+```
+
+- `init` auto-detects project/env from active profile, creates section dirs from remote sections
+- `local set/rm/ls` manipulate CSVs locally without API calls
+- `push` upserts all local strings to API via `UpsertString` per key (creates sections remotely if needed)
+- `pull` downloads all remote strings into organized CSVs (overwrites local state)
+- Workspace is found by walking up from cwd (like `.git`). `workspace.Find()` handles this
+- CSV format: `key,locale,value,format` — one row per key+locale pair
+
+### MCP Server
+
+Separate binary (`cmd/airstrings-mcp/`) exposing workspace operations as MCP tools via JSON-RPC 2.0 over stdio. Imports the same `internal/` packages as the CLI.
+
+Build: `go build -o airstrings-mcp ./cmd/airstrings-mcp`
+
+Configure in Claude Desktop or any MCP client:
+```json
+{
+  "mcpServers": {
+    "airstrings": {
+      "command": "/path/to/airstrings-mcp"
+    }
+  }
+}
+```
+
+Tools: `airstrings_init`, `airstrings_local_set`, `airstrings_local_rm`, `airstrings_local_ls`, `airstrings_push`, `airstrings_pull`, `airstrings_publish`
+
 ## Non-Negotiables
 
 1. **No secrets in source.** API keys only in `~/.airstrings/config.json` (0600). Never log or print full keys — show first 8 and last 4 chars only
@@ -104,9 +150,10 @@ Tests should:
 
 ```bash
 go build -o airstrings ./cmd/airstrings
+go build -o airstrings-mcp ./cmd/airstrings-mcp
 ```
 
-No Makefile, no build tags, no CGO. Single static binary.
+No Makefile, no build tags, no CGO. Static binaries.
 
 ## String Formats
 

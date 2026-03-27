@@ -8,6 +8,7 @@ import (
 	"github.com/symbionix/airstrings-cli/internal/client"
 	"github.com/symbionix/airstrings-cli/internal/config"
 	"github.com/symbionix/airstrings-cli/internal/output"
+	"github.com/symbionix/airstrings-cli/internal/workspace"
 )
 
 func main() {
@@ -50,6 +51,14 @@ func main() {
 		handleLocales(args)
 	case "import":
 		handleImport(args)
+	case "init":
+		handleInit(args)
+	case "local":
+		handleLocal(args)
+	case "push":
+		handlePush(args)
+	case "pull":
+		handlePull(args)
 	case "help", "--help", "-h":
 		printUsage()
 	case "version", "--version":
@@ -99,6 +108,14 @@ Bundles:
 Import:
   import csv <file>       Import strings from CSV file
   import status <id>      Check import status
+
+Workspace:
+  init [--profile <name>]                          Initialize local workspace
+  local set <key> <locale>=<value> [--format text|icu] [--section <name>]
+  local rm <key> [--locale <loc>] [--section <name>]
+  local ls [--section <name>]                      List local strings
+  push [--section <name>]                          Push local strings to API
+  pull [--section <name>]                          Pull remote strings to local
 
 Flags:
   --json                  Output as JSON (works with any command)
@@ -884,5 +901,380 @@ func handleImport(args []string) {
 
 	default:
 		output.Errorf("unknown import command: %s", args[0])
+	}
+}
+
+// --- Workspace commands ---
+
+func handleInit(args []string) {
+	profileName := ""
+	for i := 0; i < len(args); i++ {
+		if args[i] == "--profile" || args[i] == "-p" {
+			i++
+			if i < len(args) {
+				profileName = args[i]
+			}
+		}
+	}
+
+	cfg, err := config.Load()
+	if err != nil {
+		output.Errorf("load config: %s", err)
+	}
+
+	if profileName == "" {
+		profileName = cfg.ActiveProfile
+	}
+	if profileName == "" {
+		output.Errorf("no active profile — run: airstrings profile add <name>")
+	}
+
+	prof, ok := cfg.Profiles[profileName]
+	if !ok {
+		output.Errorf("profile %q not found", profileName)
+	}
+
+	// Validate credentials
+	c := client.New(prof.APIKey, prof.BaseURL, prof.ProjectID, prof.EnvID)
+	proj, err := c.GetProject()
+	if err != nil {
+		output.Errorf("validate credentials: %s", err)
+	}
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		output.Errorf("get working directory: %s", err)
+	}
+
+	wsCfg := workspace.WorkspaceConfig{
+		Profile:   profileName,
+		ProjectID: prof.ProjectID,
+		EnvID:     prof.EnvID,
+		BaseURL:   prof.BaseURL,
+	}
+	if err := workspace.Init(cwd, wsCfg); err != nil {
+		output.Errorf("init workspace: %s", err)
+	}
+
+	// Check for remote sections and create local dirs
+	wsPath := cwd + "/.airstrings"
+	sections, err := c.ListSections()
+	sectionCount := 0
+	if err == nil && len(sections.Data) > 0 {
+		for _, sec := range sections.Data {
+			workspace.CreateSectionDir(wsPath, sec.Name)
+		}
+		sectionCount = len(sections.Data)
+	}
+
+	if output.JSONMode {
+		output.JSON(map[string]any{
+			"project":  proj.Name,
+			"profile":  profileName,
+			"sections": sectionCount,
+		})
+		return
+	}
+
+	output.Success(fmt.Sprintf("Workspace initialized for %q (profile: %s)", proj.Name, profileName))
+	if sectionCount > 0 {
+		fmt.Printf("  Sections: %d initialized\n", sectionCount)
+	}
+}
+
+func handleLocal(args []string) {
+	if len(args) == 0 {
+		output.Errorf("usage: airstrings local <set|rm|ls> ...")
+	}
+
+	switch args[0] {
+	case "set":
+		handleLocalSet(args[1:])
+	case "rm", "remove":
+		handleLocalRm(args[1:])
+	case "ls", "list":
+		handleLocalLs(args[1:])
+	default:
+		output.Errorf("unknown local command: %s", args[0])
+	}
+}
+
+func handleLocalSet(args []string) {
+	if len(args) < 2 {
+		output.Errorf("usage: airstrings local set <key> <locale>=<value> [--format text|icu] [--section <name>]")
+	}
+
+	key := args[0]
+	format := "text"
+	section := ""
+	values := make(map[string]string)
+
+	for i := 1; i < len(args); i++ {
+		switch args[i] {
+		case "--format":
+			i++
+			if i < len(args) {
+				format = args[i]
+			}
+		case "--section":
+			i++
+			if i < len(args) {
+				section = args[i]
+			}
+		default:
+			parts := strings.SplitN(args[i], "=", 2)
+			if len(parts) == 2 {
+				values[parts[0]] = parts[1]
+			} else {
+				output.Errorf("invalid format %q — expected locale=value", args[i])
+			}
+		}
+	}
+
+	if len(values) == 0 {
+		output.Errorf("at least one locale=value pair is required")
+	}
+
+	wsDir, err := workspace.Find()
+	if err != nil {
+		output.Errorf("%s", err)
+	}
+
+	if section != "" {
+		if err := workspace.ValidateSectionName(section); err != nil {
+			output.Errorf("%s", err)
+		}
+	}
+
+	path := workspace.CSVPath(wsDir, section)
+	if err := workspace.SetRows(path, key, values, format); err != nil {
+		output.Errorf("set rows: %s", err)
+	}
+
+	if output.JSONMode {
+		output.JSON(map[string]any{
+			"key":     key,
+			"locales": len(values),
+			"section": section,
+			"format":  format,
+		})
+		return
+	}
+
+	loc := fmt.Sprintf("%d locale(s)", len(values))
+	if section != "" {
+		output.Success(fmt.Sprintf("Set %s — %s [%s] in %s", key, loc, format, section))
+	} else {
+		output.Success(fmt.Sprintf("Set %s — %s [%s]", key, loc, format))
+	}
+}
+
+func handleLocalRm(args []string) {
+	if len(args) < 1 {
+		output.Errorf("usage: airstrings local rm <key> [--locale <loc>] [--section <name>]")
+	}
+
+	key := args[0]
+	locale := ""
+	section := ""
+
+	for i := 1; i < len(args); i++ {
+		switch args[i] {
+		case "--locale":
+			i++
+			if i < len(args) {
+				locale = args[i]
+			}
+		case "--section":
+			i++
+			if i < len(args) {
+				section = args[i]
+			}
+		}
+	}
+
+	wsDir, err := workspace.Find()
+	if err != nil {
+		output.Errorf("%s", err)
+	}
+
+	path := workspace.CSVPath(wsDir, section)
+	if err := workspace.RemoveRows(path, key, locale); err != nil {
+		output.Errorf("remove rows: %s", err)
+	}
+
+	if output.JSONMode {
+		output.JSON(map[string]any{"key": key, "locale": locale, "section": section})
+		return
+	}
+
+	if locale != "" {
+		output.Success(fmt.Sprintf("Removed %s/%s", key, locale))
+	} else {
+		output.Success(fmt.Sprintf("Removed %s (all locales)", key))
+	}
+}
+
+func handleLocalLs(args []string) {
+	section := ""
+	for i := 0; i < len(args); i++ {
+		if args[i] == "--section" {
+			i++
+			if i < len(args) {
+				section = args[i]
+			}
+		}
+	}
+
+	wsDir, err := workspace.Find()
+	if err != nil {
+		output.Errorf("%s", err)
+	}
+
+	var allRows []localRow
+
+	if section != "" {
+		path := workspace.CSVPath(wsDir, section)
+		rows, err := workspace.ReadCSV(path)
+		if err != nil {
+			output.Errorf("read CSV: %s", err)
+		}
+		for _, r := range rows {
+			allRows = append(allRows, localRow{Section: section, Row: r})
+		}
+	} else {
+		paths, err := workspace.AllCSVPaths(wsDir)
+		if err != nil {
+			output.Errorf("scan workspace: %s", err)
+		}
+		for secName, path := range paths {
+			rows, err := workspace.ReadCSV(path)
+			if err != nil {
+				output.Errorf("read %s: %s", path, err)
+			}
+			for _, r := range rows {
+				allRows = append(allRows, localRow{Section: secName, Row: r})
+			}
+		}
+	}
+
+	if output.JSONMode {
+		output.JSON(allRows)
+		return
+	}
+
+	if len(allRows) == 0 {
+		fmt.Println("No local strings found.")
+		return
+	}
+
+	headers := []string{"KEY", "LOCALE", "VALUE", "FORMAT", "SECTION"}
+	var rows [][]string
+	for _, r := range allRows {
+		sec := r.Section
+		if sec == "" {
+			sec = "-"
+		}
+		val := r.Row.Value
+		if len(val) > 50 {
+			val = val[:50] + "..."
+		}
+		rows = append(rows, []string{r.Row.Key, r.Row.Locale, val, r.Row.Format, sec})
+	}
+	output.Table(headers, rows)
+}
+
+type localRow struct {
+	Section string         `json:"section"`
+	Row     workspace.Row  `json:"row"`
+}
+
+func handlePush(args []string) {
+	section := ""
+	for i := 0; i < len(args); i++ {
+		if args[i] == "--section" {
+			i++
+			if i < len(args) {
+				section = args[i]
+			}
+		}
+	}
+
+	wsDir, err := workspace.Find()
+	if err != nil {
+		output.Errorf("%s", err)
+	}
+
+	wsCfg, err := workspace.LoadConfig(wsDir)
+	if err != nil {
+		output.Errorf("%s", err)
+	}
+
+	c, err := workspace.ResolveClient(wsCfg)
+	if err != nil {
+		output.Errorf("%s", err)
+	}
+
+	result, err := workspace.Push(c, wsDir, section)
+	if err != nil {
+		output.Errorf("push: %s", err)
+	}
+
+	if output.JSONMode {
+		output.JSON(result)
+		return
+	}
+
+	output.Success(fmt.Sprintf("Pushed %d strings (%d errors)", result.Upserted, result.Errors))
+	if len(result.Sections) > 0 {
+		fmt.Printf("  Sections: %s\n", strings.Join(result.Sections, ", "))
+	}
+}
+
+func handlePull(args []string) {
+	section := ""
+	for i := 0; i < len(args); i++ {
+		if args[i] == "--section" {
+			i++
+			if i < len(args) {
+				section = args[i]
+			}
+		}
+	}
+
+	wsDir, err := workspace.Find()
+	if err != nil {
+		output.Errorf("%s", err)
+	}
+
+	wsCfg, err := workspace.LoadConfig(wsDir)
+	if err != nil {
+		output.Errorf("%s", err)
+	}
+
+	c, err := workspace.ResolveClient(wsCfg)
+	if err != nil {
+		output.Errorf("%s", err)
+	}
+
+	// Warn about overwrite
+	paths, _ := workspace.AllCSVPaths(wsDir)
+	if len(paths) > 0 {
+		fmt.Fprintln(os.Stderr, "Warning: local CSVs will be overwritten with remote state.")
+	}
+
+	result, err := workspace.Pull(c, wsDir, section)
+	if err != nil {
+		output.Errorf("pull: %s", err)
+	}
+
+	if output.JSONMode {
+		output.JSON(result)
+		return
+	}
+
+	output.Success(fmt.Sprintf("Pulled %d strings into %d files", result.StringCount, result.FileCount))
+	if len(result.Sections) > 0 {
+		fmt.Printf("  Sections: %s\n", strings.Join(result.Sections, ", "))
 	}
 }
