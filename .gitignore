@@ -1,0 +1,22 @@
+# Binary
+/airstrings
+*.exe
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Test
+coverage.out
+*.test
+
+# Environment
+.env
+.env.*

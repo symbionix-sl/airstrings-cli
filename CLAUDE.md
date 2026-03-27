@@ -1,0 +1,113 @@
+# AirStrings CLI
+
+Command-line interface for the AirStrings remote string management platform. Manages projects, strings, locales, sections, bundles, and imports via the AirStrings API.
+
+## Quick Reference
+
+```
+airstrings <command> [options] [--json]
+```
+
+Binary: `cmd/airstrings/main.go` — single entry point, no subpackage commands.
+Config: `~/.airstrings/config.json` — multi-profile, auto-detected project/env.
+
+## Architecture
+
+```
+cmd/airstrings/main.go     # CLI entry point, command routing, all handlers
+internal/
+  client/                   # HTTP API client (zero external deps)
+    client.go               # Base client, request/response, error handling
+    projects.go             # Project, environment, locale, bundle operations
+    strings.go              # String CRUD, sections
+    imports.go              # CSV import, status polling
+  config/                   # Profile and config management (~/.airstrings/)
+    config.go               # Load/save/active profile
+  output/                   # Terminal output (table, JSON, errors)
+    output.go               # Table via tabwriter, JSON mode, Success/Errorf
+```
+
+All command handlers live in `main.go`. No command framework — plain `switch` on `os.Args`. This is intentional; do not introduce cobra, urfave/cli, or similar.
+
+## Conventions
+
+### Go Style
+
+- **Go 1.26.1**, module path `github.com/symbionix/airstrings-cli`
+- **Zero external dependencies.** stdlib only. Do not add third-party packages
+- **No interfaces unless you need two implementations.** Concrete types everywhere
+- **Errors exit immediately** via `output.Errorf()` which prints to stderr and calls `os.Exit(1)`
+- **No global state** except `output.JSONMode` (set once at startup from `--json` flag)
+- **No context.Context yet.** Add when needed (timeouts, cancellation), not before
+
+### Command Pattern
+
+Every command follows the same structure:
+
+1. Parse args (manual, no flag package for subcommands)
+2. Call `mustClient()` to get an authenticated API client
+3. Call one client method
+4. Output: `--json` → `output.JSON(v)`, otherwise formatted text or `output.Table()`
+5. Errors: `output.Errorf("verb noun: %s", err)`
+
+When adding a new command:
+1. Add the case to the `switch` in `main()`
+2. Write a `handleX(args []string)` function in `main.go`
+3. Add the API method to the appropriate file in `internal/client/`
+4. Add usage line to `printUsage()`
+
+### API Client
+
+- Auth via `X-API-Key` header (not Bearer)
+- All requests go through `client.do(method, path, query, body, result)`
+- Paths are built with `envPath()` (environment-scoped) or `projectPath()` (project-scoped)
+- API errors are typed as `*APIError` with status code and structured body
+- Base URL defaults to `https://api.airstrings.com`, overridable per profile
+
+### Config
+
+- Stored at `~/.airstrings/config.json` with `0600` permissions
+- Multi-profile support: each profile has name, API key, base URL, project ID, env ID
+- `profile add` auto-detects project ID and default environment from the API
+- Config dir created with `0700` permissions
+
+### Output
+
+- `--json` flag works with every command (parsed globally before routing)
+- Tables use `text/tabwriter` for aligned columns
+- Success messages prefixed with `✓`
+- Error messages go to stderr, then `os.Exit(1)` — no error returns from handlers
+
+## Non-Negotiables
+
+1. **No secrets in source.** API keys only in `~/.airstrings/config.json` (0600). Never log or print full keys — show first 8 and last 4 chars only
+2. **No external dependencies.** stdlib is sufficient for this CLI. If you think you need a dep, you're wrong
+3. **No command framework.** The switch-based routing is deliberate. It keeps the binary small and the code greppable
+4. **Exit on error.** Handlers do not return errors. `output.Errorf()` is the only error path
+5. **Validate at boundaries.** Check args before calling the API client. The API provides structured errors for everything else
+6. **Config permissions matter.** Dir: 0700, files: 0600. The config contains API keys
+
+## Testing
+
+Run tests:
+```bash
+go test ./...
+```
+
+Tests should:
+- Use `testing` package and `testify/assert` (the one allowed test dep)
+- Test client methods with httptest servers, not mocks
+- Test config load/save with temp directories
+- Test output formatting with captured stdout
+
+## Building
+
+```bash
+go build -o airstrings ./cmd/airstrings
+```
+
+No Makefile, no build tags, no CGO. Single static binary.
+
+## String Formats
+
+Two formats: `text` (plain text) and `icu` (ICU MessageFormat). No other values valid. Default is `text` if omitted on create.
