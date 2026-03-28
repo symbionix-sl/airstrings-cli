@@ -37,9 +37,19 @@ This validates the key against the API and auto-detects your project ID and defa
 ### Multiple profiles
 
 ```bash
-airstrings profile add staging --key ask_test_xxxxxxxxxxxx --url https://staging.api.airstrings.com
+airstrings profile add staging --key ask_test_xxxxxxxxxxxx --url https://api-staging.airstrings.com
 airstrings profile use staging
-airstrings profile list
+airstrings profile list              # shows all profiles, ✓ marks active
+airstrings profile show              # show active profile details
+```
+
+### Update API key
+
+Replace the API key on the active profile without changing anything else:
+
+```bash
+airstrings profile set-key ask_live_newkey
+airstrings profile set-key ask_live_newkey --profile staging   # specific profile
 ```
 
 ## Usage
