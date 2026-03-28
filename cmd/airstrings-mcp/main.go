@@ -8,6 +8,8 @@ import (
 	"os"
 )
 
+var version = "dev"
+
 const protocolVersion = "2024-11-05"
 
 func main() {
@@ -56,7 +58,7 @@ func (s *MCPServer) handle(req JSONRPCRequest) *JSONRPCResponse {
 				},
 				ServerInfo: ServerInfo{
 					Name:    "airstrings-mcp",
-					Version: "0.1.0",
+					Version: version,
 				},
 			},
 		}

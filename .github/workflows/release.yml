@@ -39,10 +39,11 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
+          LDFLAGS="-s -w -X main.version=${VERSION}"
           mkdir -p dist
 
-          go build -ldflags="-s -w" -o dist/airstrings ./cmd/airstrings
-          go build -ldflags="-s -w" -o dist/airstrings-mcp ./cmd/airstrings-mcp
+          go build -ldflags="${LDFLAGS}" -o dist/airstrings ./cmd/airstrings
+          go build -ldflags="${LDFLAGS}" -o dist/airstrings-mcp ./cmd/airstrings-mcp
 
       - name: Create tarball
         run: |

@@ -15,6 +15,8 @@ import (
 	"github.com/symbionix/airstrings-cli/internal/workspace"
 )
 
+var version = "dev"
+
 func main() {
 	args := os.Args[1:]
 	if len(args) == 0 {
@@ -68,7 +70,7 @@ func main() {
 	case "help", "--help", "-h":
 		printUsage()
 	case "version", "--version":
-		fmt.Println("airstrings v0.1.0")
+		fmt.Printf("airstrings %s\n", version)
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown command: %s\n\n", cmd)
 		printUsage()
