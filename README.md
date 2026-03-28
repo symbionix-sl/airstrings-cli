@@ -7,8 +7,7 @@ Command-line interface for [AirStrings](https://airstrings.com) — manage strin
 ### Homebrew
 
 ```bash
-brew tap symbionix-sl/airstrings
-brew install airstrings
+brew install symbionix-sl/airstrings/airstrings
 ```
 
 ### From source
