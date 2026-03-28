@@ -105,6 +105,18 @@ func (a *fullAPI) handleStringByKey(w http.ResponseWriter, r *http.Request) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
+	// Check if this is a section assignment: /strings/{key}/section
+	if filepath.Base(r.URL.Path) == "section" {
+		key := filepath.Base(filepath.Dir(r.URL.Path))
+		var req client.AssignSectionRequest
+		json.NewDecoder(r.Body).Decode(&req)
+		if entry, ok := a.strings[key]; ok {
+			entry.SectionID = req.SectionID
+		}
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
 	key := filepath.Base(r.URL.Path)
 
 	switch r.Method {
@@ -123,9 +135,6 @@ func (a *fullAPI) handleStringByKey(w http.ResponseWriter, r *http.Request) {
 
 		if req.Format != "" {
 			entry.Format = req.Format
-		}
-		if req.SectionID != nil {
-			entry.SectionID = req.SectionID
 		}
 		for loc, val := range req.Values {
 			if val != nil {

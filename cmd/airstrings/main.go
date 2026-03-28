@@ -1243,6 +1243,12 @@ func handlePush(args []string) {
 	if len(result.Sections) > 0 {
 		fmt.Printf("  Sections: %s\n", strings.Join(result.Sections, ", "))
 	}
+	if len(result.FailedKeys) > 0 {
+		fmt.Fprintf(os.Stderr, "\nFailed keys:\n")
+		for _, fe := range result.FailedKeys {
+			fmt.Fprintf(os.Stderr, "  %s: %s\n", fe.Key, fe.Message)
+		}
+	}
 }
 
 func handlePull(args []string) {

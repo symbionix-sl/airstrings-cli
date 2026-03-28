@@ -7,11 +7,18 @@ import (
 	"github.com/symbionix/airstrings-cli/internal/client"
 )
 
+// PushError records a single key that failed to upsert.
+type PushError struct {
+	Key     string `json:"key"`
+	Message string `json:"message"`
+}
+
 // PushResult summarizes the outcome of a push operation.
 type PushResult struct {
-	Upserted int
-	Errors   int
-	Sections []string
+	Upserted    int         `json:"upserted"`
+	Errors      int         `json:"errors"`
+	Sections    []string    `json:"sections"`
+	FailedKeys  []PushError `json:"failed_keys,omitempty"`
 }
 
 // PullResult summarizes the outcome of a pull operation.
@@ -82,16 +89,30 @@ func Push(c *client.Client, wsDir, section string) (*PushResult, error) {
 			}
 
 			req := client.UpsertStringRequest{
-				Format:    format,
-				Values:    values,
-				SectionID: sectionID,
+				Format: format,
+				Values: values,
 			}
 
 			_, err := c.UpsertString(key, req)
 			if err != nil {
 				result.Errors++
+				result.FailedKeys = append(result.FailedKeys, PushError{
+					Key:     key,
+					Message: err.Error(),
+				})
 				continue
 			}
+
+			// Assign section if needed
+			if sectionID != nil {
+				if err := c.AssignSection(key, client.AssignSectionRequest{SectionID: sectionID}); err != nil {
+					result.FailedKeys = append(result.FailedKeys, PushError{
+						Key:     key,
+						Message: fmt.Sprintf("assign section: %s", err),
+					})
+				}
+			}
+
 			result.Upserted++
 		}
 	}

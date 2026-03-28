@@ -70,9 +70,17 @@ func (c *Client) CreateString(req CreateStringRequest) (*StringEntry, error) {
 }
 
 type UpsertStringRequest struct {
-	Format    string             `json:"format,omitempty"`
-	SectionID *string            `json:"section_id,omitempty"`
-	Values    map[string]*string `json:"values"`
+	Format string             `json:"format,omitempty"`
+	Values map[string]*string `json:"values"`
+}
+
+// AssignSectionRequest assigns a string to a section (or removes it if nil).
+type AssignSectionRequest struct {
+	SectionID *string `json:"section_id"`
+}
+
+func (c *Client) AssignSection(key string, req AssignSectionRequest) error {
+	return c.do("PUT", c.envPath()+"/strings/"+key+"/section", nil, req, nil)
 }
 
 func (c *Client) UpsertString(key string, req UpsertStringRequest) (*StringEntry, error) {

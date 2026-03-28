@@ -155,6 +155,10 @@ go build -o airstrings-mcp ./cmd/airstrings-mcp
 
 No Makefile, no build tags, no CGO. Static binaries.
 
+## API Spec
+
+The OpenAPI 3.1 spec is at `../../api/openapi.yaml` (relative to this repo root). Consult it when adding or modifying API client methods.
+
 ## String Formats
 
 Two formats: `text` (plain text) and `icu` (ICU MessageFormat). No other values valid. Default is `text` if omitted on create.

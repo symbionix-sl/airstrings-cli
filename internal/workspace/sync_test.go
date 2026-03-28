@@ -71,6 +71,12 @@ func (a *testAPI) handleStrings(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *testAPI) handleStringByKey(w http.ResponseWriter, r *http.Request) {
+	// Handle section assignment: /strings/{key}/section
+	if filepath.Base(r.URL.Path) == "section" {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
 	// Extract key from path: /v1/projects/proj/environments/env/strings/<key>
 	key := filepath.Base(r.URL.Path)
 
