@@ -4,6 +4,13 @@ Command-line interface for [AirStrings](https://airstrings.com) — manage strin
 
 ## Install
 
+### Homebrew
+
+```bash
+brew tap symbionix-sl/airstrings
+brew install airstrings
+```
+
 ### From source
 
 ```bash
@@ -84,6 +91,95 @@ airstrings publish en es            # Publish specific locales
 airstrings import csv strings.csv   # Import strings from CSV
 airstrings import status imp_xxxxx  # Check import progress
 ```
+
+### Workspace
+
+The workspace workflow lets you manage strings locally and sync with the API. This is the recommended workflow for AI-assisted string management.
+
+```bash
+# Initialize workspace in your project
+airstrings init
+
+# Add strings locally (no API calls)
+airstrings local set onboarding.welcome en="Welcome!" it="Benvenuto!" --section onboarding
+airstrings local set onboarding.welcome de="Willkommen!" es="¡Bienvenido!" fr="Bienvenue!" --section onboarding
+airstrings local set app.tagline en="The best app" it="La migliore app" --format text
+
+# List local strings
+airstrings local ls
+airstrings local ls --section onboarding
+
+# Edit and remove
+airstrings local set onboarding.welcome en="Welcome to the app!" --section onboarding
+airstrings local rm old.key --section onboarding
+
+# Push to AirStrings
+airstrings push
+airstrings push --section onboarding   # push single section
+
+# Pull remote strings to local
+airstrings pull
+```
+
+The `airstrings init` command creates a `.airstrings/` folder in your project root:
+
+```
+.airstrings/
+  config.json              # workspace config (project ID, env ID, profile)
+  strings.csv              # unsectioned strings
+  onboarding/onboarding.csv  # section strings
+  settings/settings.csv
+```
+
+Each section gets its own subdirectory with a CSV file. Unsectioned strings live in the root `strings.csv`. All files are plain CSV and can be committed to version control.
+
+### MCP Server
+
+AirStrings provides an MCP server so AI assistants like Claude can manage strings directly through structured tool calls.
+
+```bash
+airstrings mcp install                  # for Claude Code
+airstrings mcp install --claude-desktop # for Claude Desktop
+airstrings mcp status                   # check installation
+```
+
+That's it. Restart Claude and the tools are available.
+
+#### Example: AI-assisted localization
+
+```
+You: "Translate my app's onboarding screen into Italian, German, Spanish, and French"
+
+Claude uses airstrings_local_set:
+  key: "onboarding.welcome"
+  values: {"it": "Benvenuto!", "de": "Willkommen!", "es": "¡Bienvenido!", "fr": "Bienvenue!"}
+  section: "onboarding"
+
+Claude uses airstrings_local_set:
+  key: "onboarding.subtitle"
+  values: {"it": "Inizia il tuo viaggio", "de": "Beginne deine Reise", "es": "Comienza tu viaje", "fr": "Commencez votre voyage"}
+  section: "onboarding"
+
+Claude uses airstrings_push:
+  section: "onboarding"
+
+-> Pushed 2 strings (0 errors)
+   Sections: onboarding
+```
+
+Instead of generating CSV files, the AI calls structured MCP tools -- one call per string. This saves tokens and eliminates CSV formatting errors.
+
+#### Available MCP tools
+
+| Tool | Description |
+|------|-------------|
+| `airstrings_init` | Initialize workspace |
+| `airstrings_local_set` | Add/update string in local CSV |
+| `airstrings_local_rm` | Remove string from local CSV |
+| `airstrings_local_ls` | List local strings |
+| `airstrings_push` | Push local strings to API |
+| `airstrings_pull` | Pull remote strings to local |
+| `airstrings_publish` | Publish bundles to CDN |
 
 ### JSON Output
 

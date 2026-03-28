@@ -1,0 +1,189 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+env:
+  GO_VERSION: "1.26.1"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - goos: darwin
+            goarch: arm64
+          - goos: darwin
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+          - goos: linux
+            goarch: amd64
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Build binaries
+        env:
+          CGO_ENABLED: "0"
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          mkdir -p dist
+
+          go build -ldflags="-s -w" -o dist/airstrings ./cmd/airstrings
+          go build -ldflags="-s -w" -o dist/airstrings-mcp ./cmd/airstrings-mcp
+
+      - name: Create tarball
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          ARCHIVE="airstrings-v${VERSION}-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz"
+          tar -czf "${ARCHIVE}" -C dist airstrings airstrings-mcp
+          echo "ARCHIVE=${ARCHIVE}" >> "$GITHUB_ENV"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: airstrings-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: ${{ env.ARCHIVE }}
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Create GitHub Release (private repo)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --title "$GITHUB_REF_NAME" \
+            --generate-notes \
+            artifacts/*.tar.gz
+
+      - name: Upload release assets to public tap repo
+        env:
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          VERSION="${GITHUB_REF_NAME}"
+
+          # Create a release on the public repo (or update if exists)
+          gh release create "${VERSION}" \
+            --repo symbionix-sl/homebrew-airstrings \
+            --title "${VERSION}" \
+            --notes "AirStrings CLI ${VERSION}" \
+            artifacts/*.tar.gz || \
+          gh release upload "${VERSION}" \
+            --repo symbionix-sl/homebrew-airstrings \
+            --clobber \
+            artifacts/*.tar.gz
+
+  update-tap:
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Compute SHA256 sums
+        id: sha
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+          for file in artifacts/*.tar.gz; do
+            name=$(basename "$file")
+            sha=$(shasum -a 256 "$file" | awk '{print $1}')
+
+            if [[ "$name" == *darwin-arm64* ]]; then
+              echo "sha_darwin_arm64=${sha}" >> "$GITHUB_OUTPUT"
+            elif [[ "$name" == *darwin-amd64* ]]; then
+              echo "sha_darwin_amd64=${sha}" >> "$GITHUB_OUTPUT"
+            elif [[ "$name" == *linux-arm64* ]]; then
+              echo "sha_linux_arm64=${sha}" >> "$GITHUB_OUTPUT"
+            elif [[ "$name" == *linux-amd64* ]]; then
+              echo "sha_linux_amd64=${sha}" >> "$GITHUB_OUTPUT"
+            fi
+          done
+
+      - name: Update Homebrew formula
+        env:
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          VERSION: ${{ steps.sha.outputs.version }}
+          SHA_DARWIN_ARM64: ${{ steps.sha.outputs.sha_darwin_arm64 }}
+          SHA_DARWIN_AMD64: ${{ steps.sha.outputs.sha_darwin_amd64 }}
+          SHA_LINUX_ARM64: ${{ steps.sha.outputs.sha_linux_arm64 }}
+          SHA_LINUX_AMD64: ${{ steps.sha.outputs.sha_linux_amd64 }}
+        run: |
+          git clone "https://x-access-token:${GH_TOKEN}@github.com/symbionix-sl/homebrew-airstrings.git" tap
+          cd tap
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          BASE_URL="https://github.com/symbionix-sl/homebrew-airstrings/releases/download/v${VERSION}"
+
+          cat > Formula/airstrings.rb << RUBY
+          class Airstrings < Formula
+            desc "CLI for the AirStrings remote string management platform"
+            homepage "https://airstrings.com"
+            version "${VERSION}"
+            license "MIT"
+
+            on_macos do
+              if Hardware::CPU.arm?
+                url "${BASE_URL}/airstrings-v${VERSION}-darwin-arm64.tar.gz"
+                sha256 "${SHA_DARWIN_ARM64}"
+              else
+                url "${BASE_URL}/airstrings-v${VERSION}-darwin-amd64.tar.gz"
+                sha256 "${SHA_DARWIN_AMD64}"
+              end
+            end
+
+            on_linux do
+              if Hardware::CPU.arm?
+                url "${BASE_URL}/airstrings-v${VERSION}-linux-arm64.tar.gz"
+                sha256 "${SHA_LINUX_ARM64}"
+              else
+                url "${BASE_URL}/airstrings-v${VERSION}-linux-amd64.tar.gz"
+                sha256 "${SHA_LINUX_AMD64}"
+              end
+            end
+
+            def install
+              bin.install "airstrings"
+              bin.install "airstrings-mcp"
+            end
+
+            test do
+              assert_match version.to_s, shell_output("#{bin}/airstrings version")
+            end
+          end
+          RUBY
+
+          # Remove leading whitespace from heredoc indentation
+          sed -i 's/^          //' Formula/airstrings.rb
+
+          git add Formula/airstrings.rb
+          git commit -m "Update airstrings to ${VERSION}"
+          git push origin main

@@ -1,8 +1,12 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/symbionix/airstrings-cli/internal/client"
@@ -59,6 +63,8 @@ func main() {
 		handlePush(args)
 	case "pull":
 		handlePull(args)
+	case "mcp":
+		handleMCP(args)
 	case "help", "--help", "-h":
 		printUsage()
 	case "version", "--version":
@@ -116,6 +122,12 @@ Workspace:
   local ls [--section <name>]                      List local strings
   push [--section <name>]                          Push local strings to API
   pull [--section <name>]                          Pull remote strings to local
+
+MCP:
+  mcp install                  Install MCP server for Claude Code
+  mcp install --claude-desktop Install MCP server for Claude Desktop
+  mcp uninstall                Remove MCP server from Claude Code
+  mcp status                   Check MCP installation status
 
 Flags:
   --json                  Output as JSON (works with any command)
@@ -1276,5 +1288,227 @@ func handlePull(args []string) {
 	output.Success(fmt.Sprintf("Pulled %d strings into %d files", result.StringCount, result.FileCount))
 	if len(result.Sections) > 0 {
 		fmt.Printf("  Sections: %s\n", strings.Join(result.Sections, ", "))
+	}
+}
+
+// --- MCP commands ---
+
+func handleMCP(args []string) {
+	if len(args) == 0 {
+		output.Errorf("usage: airstrings mcp <install|uninstall|status>")
+	}
+
+	switch args[0] {
+	case "install":
+		claudeDesktop := false
+		for _, a := range args[1:] {
+			if a == "--claude-desktop" {
+				claudeDesktop = true
+			}
+		}
+		handleMCPInstall(claudeDesktop)
+	case "uninstall":
+		claudeDesktop := false
+		for _, a := range args[1:] {
+			if a == "--claude-desktop" {
+				claudeDesktop = true
+			}
+		}
+		handleMCPUninstall(claudeDesktop)
+	case "status":
+		handleMCPStatus()
+	default:
+		output.Errorf("unknown mcp command: %s", args[0])
+	}
+}
+
+// findMCPBinary locates the airstrings-mcp binary.
+// Checks: 1) next to this binary, 2) in PATH.
+func findMCPBinary() (string, error) {
+	// Check next to the current executable
+	exe, err := os.Executable()
+	if err == nil {
+		exe, _ = filepath.EvalSymlinks(exe)
+		sibling := filepath.Join(filepath.Dir(exe), "airstrings-mcp")
+		if _, err := os.Stat(sibling); err == nil {
+			return sibling, nil
+		}
+	}
+
+	// Check PATH
+	path, err := exec.LookPath("airstrings-mcp")
+	if err == nil {
+		abs, _ := filepath.Abs(path)
+		return abs, nil
+	}
+
+	return "", fmt.Errorf("airstrings-mcp not found — install it with: brew install symbionix-sl/airstrings/airstrings")
+}
+
+// claudeCodeSettingsPath returns the path to Claude Code's user settings.
+func claudeCodeSettingsPath() string {
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".claude", "settings.json")
+}
+
+// claudeDesktopConfigPath returns the path to Claude Desktop's config.
+func claudeDesktopConfigPath() string {
+	home, _ := os.UserHomeDir()
+	if runtime.GOOS == "darwin" {
+		return filepath.Join(home, "Library", "Application Support", "Claude", "claude_desktop_config.json")
+	}
+	// Linux / Windows fallback
+	return filepath.Join(home, ".config", "claude", "claude_desktop_config.json")
+}
+
+func handleMCPInstall(claudeDesktop bool) {
+	mcpBin, err := findMCPBinary()
+	if err != nil {
+		output.Errorf("%s", err)
+	}
+
+	var settingsPath string
+	var target string
+	if claudeDesktop {
+		settingsPath = claudeDesktopConfigPath()
+		target = "Claude Desktop"
+	} else {
+		settingsPath = claudeCodeSettingsPath()
+		target = "Claude Code"
+	}
+
+	// Read existing settings or start fresh
+	settings := make(map[string]any)
+	data, err := os.ReadFile(settingsPath)
+	if err == nil {
+		json.Unmarshal(data, &settings)
+	}
+
+	// Get or create mcpServers
+	mcpServers, ok := settings["mcpServers"].(map[string]any)
+	if !ok {
+		mcpServers = make(map[string]any)
+	}
+
+	// Check if already installed
+	if existing, ok := mcpServers["airstrings"].(map[string]any); ok {
+		if cmd, _ := existing["command"].(string); cmd == mcpBin {
+			output.Success(fmt.Sprintf("AirStrings MCP already installed in %s", target))
+			fmt.Printf("  Binary: %s\n", mcpBin)
+			return
+		}
+	}
+
+	// Add airstrings MCP server
+	mcpServers["airstrings"] = map[string]any{
+		"command": mcpBin,
+	}
+	settings["mcpServers"] = mcpServers
+
+	// Write back
+	if err := os.MkdirAll(filepath.Dir(settingsPath), 0755); err != nil {
+		output.Errorf("create config dir: %s", err)
+	}
+	out, _ := json.MarshalIndent(settings, "", "  ")
+	if err := os.WriteFile(settingsPath, out, 0644); err != nil {
+		output.Errorf("write settings: %s", err)
+	}
+
+	output.Success(fmt.Sprintf("AirStrings MCP installed for %s", target))
+	fmt.Printf("  Binary:   %s\n", mcpBin)
+	fmt.Printf("  Settings: %s\n", settingsPath)
+	if !claudeDesktop {
+		fmt.Println("\n  Restart Claude Code to activate.")
+	} else {
+		fmt.Println("\n  Restart Claude Desktop to activate.")
+	}
+}
+
+func handleMCPUninstall(claudeDesktop bool) {
+	var settingsPath string
+	var target string
+	if claudeDesktop {
+		settingsPath = claudeDesktopConfigPath()
+		target = "Claude Desktop"
+	} else {
+		settingsPath = claudeCodeSettingsPath()
+		target = "Claude Code"
+	}
+
+	data, err := os.ReadFile(settingsPath)
+	if err != nil {
+		output.Errorf("no settings found at %s", settingsPath)
+	}
+
+	settings := make(map[string]any)
+	json.Unmarshal(data, &settings)
+
+	mcpServers, ok := settings["mcpServers"].(map[string]any)
+	if !ok {
+		output.Success(fmt.Sprintf("AirStrings MCP not found in %s", target))
+		return
+	}
+
+	if _, ok := mcpServers["airstrings"]; !ok {
+		output.Success(fmt.Sprintf("AirStrings MCP not found in %s", target))
+		return
+	}
+
+	delete(mcpServers, "airstrings")
+	settings["mcpServers"] = mcpServers
+
+	out, _ := json.MarshalIndent(settings, "", "  ")
+	os.WriteFile(settingsPath, out, 0644)
+
+	output.Success(fmt.Sprintf("AirStrings MCP removed from %s", target))
+}
+
+func handleMCPStatus() {
+	mcpBin, binErr := findMCPBinary()
+
+	fmt.Println("AirStrings MCP Status")
+	fmt.Println()
+
+	// Binary
+	if binErr != nil {
+		fmt.Println("  Binary:         not found")
+	} else {
+		fmt.Printf("  Binary:         %s\n", mcpBin)
+	}
+
+	// Claude Code
+	ccPath := claudeCodeSettingsPath()
+	ccInstalled := false
+	if data, err := os.ReadFile(ccPath); err == nil {
+		var s map[string]any
+		json.Unmarshal(data, &s)
+		if servers, ok := s["mcpServers"].(map[string]any); ok {
+			if _, ok := servers["airstrings"]; ok {
+				ccInstalled = true
+			}
+		}
+	}
+	if ccInstalled {
+		fmt.Println("  Claude Code:    installed")
+	} else {
+		fmt.Println("  Claude Code:    not installed")
+	}
+
+	// Claude Desktop
+	cdPath := claudeDesktopConfigPath()
+	cdInstalled := false
+	if data, err := os.ReadFile(cdPath); err == nil {
+		var s map[string]any
+		json.Unmarshal(data, &s)
+		if servers, ok := s["mcpServers"].(map[string]any); ok {
+			if _, ok := servers["airstrings"]; ok {
+				cdInstalled = true
+			}
+		}
+	}
+	if cdInstalled {
+		fmt.Println("  Claude Desktop: installed")
+	} else {
+		fmt.Println("  Claude Desktop: not installed")
 	}
 }
