@@ -70,13 +70,14 @@ When adding a new command:
 - All requests go through `client.do(method, path, query, body, result)`
 - Paths are built with `envPath()` (environment-scoped) or `projectPath()` (project-scoped)
 - API errors are typed as `*APIError` with status code and structured body
-- Base URL defaults to `https://api.airstrings.com`, overridable per profile
+- Base URL defaults to `https://api.airstrings.com`, overridable per credential
 
 ### Config
 
 - Stored at `~/.airstrings/config.json` with `0600` permissions
-- Multi-profile support: each profile has name, API key, base URL, project ID, env ID
-- `profile add` auto-detects project ID and default environment from the API
+- Credential-based: each credential maps an API key to a project+environment
+- `login` validates the key and auto-detects project, environments, and names
+- `env use` / `project use` switch active context
 - Config dir created with `0700` permissions
 
 ### Output
@@ -92,7 +93,7 @@ Local workspace for AI-friendly string management. Initialized via `airstrings i
 
 ```
 .airstrings/                  # Created by `airstrings init` in project root
-  config.json                 # Project-local config (profile ref, project/env IDs)
+  config.json                 # Project-local config (project/env IDs)
   strings.csv                 # Unsectioned strings (flat mode)
   home/home.csv               # Section "home" strings
   login/login.csv             # Section "login" strings

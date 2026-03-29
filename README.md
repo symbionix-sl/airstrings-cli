@@ -26,30 +26,28 @@ go build -o airstrings ./cmd/airstrings
 
 ## Setup
 
-Create a profile with your API key:
+Log in with your API key:
 
 ```bash
-airstrings profile add myproject --key ask_live_xxxxxxxxxxxx
+airstrings login ask_live_xxxxxxxxxxxx
 ```
 
-This validates the key against the API and auto-detects your project ID and default environment.
+This validates the key, auto-detects your project and environments, and stores credentials.
 
-### Multiple profiles
+### Switching environments
 
 ```bash
-airstrings profile add staging --key ask_test_xxxxxxxxxxxx --url https://api-staging.airstrings.com
-airstrings profile use staging
-airstrings profile list              # shows all profiles, ✓ marks active
-airstrings profile show              # show active profile details
+airstrings env                      # list environments (✓ = active)
+airstrings env use staging          # switch to staging
+airstrings status                   # show current project, env, and key
 ```
 
-### Update API key
-
-Replace the API key on the active profile without changing anything else:
+### Shorthands (chainable)
 
 ```bash
-airstrings profile set-key ask_live_newkey
-airstrings profile set-key ask_live_newkey --profile staging   # specific profile
+airstrings -e -u staging            # switch env
+airstrings -p -u MyProject          # switch project
+airstrings -p -u MyProject -e -u staging   # switch both
 ```
 
 ## Usage
@@ -62,8 +60,9 @@ airstrings <command> [options]
 
 ```bash
 airstrings project                  # Show project info
-airstrings envs                     # List environments
-airstrings envs create staging      # Create a new environment
+airstrings project use MyProject    # Switch active project
+airstrings env                      # List environments
+airstrings env create staging       # Create a new environment
 airstrings locales                  # List locales with string counts
 ```
 
@@ -201,24 +200,23 @@ airstrings project --json | jq '.name'
 
 ## Configuration
 
-Config is stored at `~/.airstrings/config.json`. Each profile contains:
+Config is stored at `~/.airstrings/config.json`. Each credential maps an API key to a project and environment:
 
 | Field | Description |
 |---|---|
-| `api_key` | Scoped API key for the project |
+| `api_key` | Scoped API key |
 | `base_url` | API base URL (defaults to production) |
 | `project_id` | Auto-detected from API key |
-| `env_id` | Environment ID (auto-detected or manual) |
-
-### Profile commands
+| `project_name` | Human-readable project name |
+| `env_id` | Environment ID |
+| `env_name` | Human-readable environment name |
 
 ```bash
-airstrings profile add <name> --key <api-key> [--url <base-url>] [--env <env-id>]
-airstrings profile list
-airstrings profile use <name>
-airstrings profile show
-airstrings profile set-key <new-key>
-airstrings profile remove <name>
+airstrings login <api-key> [--url <base-url>]    # add credentials
+airstrings logout                                 # remove current credential
+airstrings status                                 # show active context
+airstrings env use <name>                         # switch environment
+airstrings project use <name>                     # switch project
 ```
 
 ## Requirements

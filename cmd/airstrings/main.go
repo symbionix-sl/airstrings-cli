@@ -35,16 +35,27 @@ func main() {
 	}
 	args = filtered
 
+	// Handle shorthand flags: -p -u <project>, -e -u <env>, chainable
+	if handleShorthandFlags(args) {
+		return
+	}
+
 	cmd := args[0]
 	args = args[1:]
 
 	switch cmd {
-	case "profile":
-		handleProfile(args)
+	case "login":
+		handleLogin(args)
+	case "logout":
+		handleLogout(args)
+	case "status":
+		handleStatus(args)
 	case "project":
 		handleProject(args)
-	case "envs":
-		handleEnvs(args)
+	case "env":
+		handleEnv(args)
+	case "envs": // backward compat
+		handleEnv(args)
 	case "strings":
 		handleStrings(args)
 	case "sections":
@@ -67,6 +78,8 @@ func main() {
 		handlePull(args)
 	case "mcp":
 		handleMCP(args)
+	case "profile":
+		output.Errorf("'profile' commands have been replaced. Use: login, logout, status, project use, env use")
 	case "help", "--help", "-h":
 		printUsage()
 	case "version", "--version":
@@ -83,19 +96,22 @@ func printUsage() {
 
 Usage: airstrings <command> [options]
 
-Profile Management:
-  profile add <name> --key <api-key> [--url <base-url>] [--env <env-id>]
-  profile set-key <new-api-key> [--profile <name>]
-  profile list
-  profile use <name>
-  profile remove <name>
-  profile show
+Auth:
+  login <api-key> [--url <base-url>]    Authenticate and store credentials
+  logout                                Remove current credential
+  status                                Show active project, environment, and key
 
-Project & Environments:
-  project                 Show current project info
-  envs                    List environments
-  envs create <name>      Create environment
-  locales                 List locales with string counts
+Navigation:
+  project                               Show current project info
+  project use <name>                    Switch active project
+  env                                   List environments (✓ = active)
+  env use <name>                        Switch active environment
+  locales                               List locales with string counts
+
+Shorthands (chainable):
+  -p -u <project-name>                  Switch project
+  -e -u <env-name>                      Switch environment
+  -p -u <project> -e -u <env>           Switch both
 
 Strings:
   strings list [--locale <loc>] [--section <id>] [--limit <n>]
@@ -118,7 +134,7 @@ Import:
   import status <id>      Check import status
 
 Workspace:
-  init [--profile <name>]                          Initialize local workspace
+  init                                             Initialize local workspace
   local set <key> <locale>=<value> [--format text|icu] [--section <name>]
   local rm <key> [--locale <loc>] [--section <name>]
   local ls [--section <name>]                      List local strings
@@ -144,343 +160,284 @@ func mustClient() *client.Client {
 		output.Errorf("load config: %s", err)
 	}
 
-	prof, err := cfg.Active()
+	cred, err := cfg.ActiveCredential()
 	if err != nil {
 		output.Errorf("%s", err)
 	}
 
-	if prof.APIKey == "" {
-		output.Errorf("no API key set for profile %q", cfg.ActiveProfile)
-	}
-
-	return client.New(prof.APIKey, prof.BaseURL, prof.ProjectID, prof.EnvID)
+	return client.New(cred.APIKey, cred.BaseURL, cred.ProjectID, cred.EnvID)
 }
 
-// resolveEnvID ensures the client has an env ID, fetching the default if needed.
-func resolveEnvID(c *client.Client) *client.Client {
-	if c.EnvID() != "" {
-		return c
+// handleShorthandFlags processes -p -u <name> and -e -u <name> flags.
+// Returns true if flags were handled (no further command processing needed).
+func handleShorthandFlags(args []string) bool {
+	if len(args) == 0 || args[0][0] != '-' || args[0] == "--json" || args[0] == "--help" || args[0] == "--version" || args[0] == "-h" {
+		return false
 	}
-	// Auto-detect: use the default environment
-	envs, err := c.ListEnvironments()
+
+	cfg, err := config.Load()
 	if err != nil {
-		output.Errorf("list environments: %s", err)
+		output.Errorf("load config: %s", err)
 	}
-	for _, e := range envs {
-		if e.IsDefault {
-			return client.New(
-				"", // will be filled from the original client internals
-				"", "", e.ID,
-			)
+
+	changed := false
+	i := 0
+	for i < len(args) {
+		if (args[i] == "-p" || args[i] == "--project") && i+2 < len(args) && (args[i+1] == "-u" || args[i+1] == "--use") {
+			name := args[i+2]
+			switchProject(cfg, name)
+			changed = true
+			i += 3
+		} else if (args[i] == "-e" || args[i] == "--env") && i+2 < len(args) && (args[i+1] == "-u" || args[i+1] == "--use") {
+			name := args[i+2]
+			switchEnv(cfg, name)
+			changed = true
+			i += 3
+		} else {
+			break
 		}
 	}
-	output.Errorf("no default environment found — set one with: airstrings profile add ... --env <env_id>")
-	return nil
+
+	if !changed {
+		return false
+	}
+
+	if err := cfg.Save(); err != nil {
+		output.Errorf("save config: %s", err)
+	}
+
+	// If there are remaining args after flags, they're a command — don't handle here
+	if i < len(args) {
+		return false
+	}
+
+	// No command after flags — print status
+	printStatus(cfg)
+	return true
 }
 
-// --- Profile commands ---
+func switchProject(cfg *config.Config, name string) {
+	// Find project by name (case-insensitive)
+	var found []config.Credential
+	for _, cred := range cfg.Credentials {
+		if strings.EqualFold(cred.ProjectName, name) {
+			found = append(found, cred)
+		}
+	}
+	if len(found) == 0 {
+		// Try by ID
+		found = cfg.FindByProjectID(name)
+	}
+	if len(found) == 0 {
+		projects := cfg.Projects()
+		var names []string
+		for _, n := range projects {
+			names = append(names, n)
+		}
+		output.Errorf("project %q not found. Available: %s", name, strings.Join(names, ", "))
+	}
 
-func handleProfile(args []string) {
-	if len(args) == 0 {
-		handleProfileShow()
+	cfg.ActiveProject = found[0].ProjectID
+
+	// Auto-select default env for this project
+	envFound := false
+	for _, cred := range found {
+		if cred.EnvID == cfg.ActiveEnv {
+			envFound = true
+			break
+		}
+	}
+	if !envFound {
+		// Pick first available env for this project
+		cfg.ActiveEnv = found[0].EnvID
+	}
+}
+
+func switchEnv(cfg *config.Config, name string) {
+	// Find env by name within active project (case-insensitive)
+	for _, cred := range cfg.Credentials {
+		if cred.ProjectID == cfg.ActiveProject && strings.EqualFold(cred.EnvName, name) {
+			cfg.ActiveEnv = cred.EnvID
+			return
+		}
+	}
+	// Try by ID
+	for _, cred := range cfg.Credentials {
+		if cred.ProjectID == cfg.ActiveProject && cred.EnvID == name {
+			cfg.ActiveEnv = cred.EnvID
+			return
+		}
+	}
+
+	// List available envs
+	creds := cfg.FindByProjectID(cfg.ActiveProject)
+	var names []string
+	for _, c := range creds {
+		names = append(names, c.EnvName)
+	}
+	output.Errorf("environment %q not found. Available: %s", name, strings.Join(names, ", "))
+}
+
+func printStatus(cfg *config.Config) {
+	cred, err := cfg.ActiveCredential()
+	if err != nil {
+		output.Errorf("%s", err)
+	}
+
+	if output.JSONMode {
+		output.JSON(map[string]string{
+			"project_id":   cred.ProjectID,
+			"project_name": cred.ProjectName,
+			"env_id":       cred.EnvID,
+			"env_name":     cred.EnvName,
+			"base_url":     cred.BaseURL,
+		})
 		return
 	}
 
-	switch args[0] {
-	case "add":
-		handleProfileAdd(args[1:])
-	case "list", "ls":
-		handleProfileList()
-	case "use":
-		if len(args) < 2 {
-			output.Errorf("usage: airstrings profile use <name>")
-		}
-		handleProfileUse(args[1])
-	case "remove", "rm":
-		if len(args) < 2 {
-			output.Errorf("usage: airstrings profile remove <name>")
-		}
-		handleProfileRemove(args[1])
-	case "set-key":
-		if len(args) < 2 {
-			output.Errorf("usage: airstrings profile set-key <new-api-key> [--profile <name>]")
-		}
-		handleProfileSetKey(args[1:])
-	case "show":
-		handleProfileShow()
-	default:
-		output.Errorf("unknown profile command: %s", args[0])
+	fmt.Printf("Project:  %s (%s)\n", cred.ProjectName, cred.ProjectID)
+	fmt.Printf("Env:      %s (%s)\n", cred.EnvName, cred.EnvID)
+	url := cred.BaseURL
+	if url == "" {
+		url = "https://api.airstrings.com"
 	}
+	fmt.Printf("API URL:  %s\n", url)
+	fmt.Printf("Key:      %s...%s\n", cred.APIKey[:8], cred.APIKey[len(cred.APIKey)-4:])
 }
 
-func handleProfileAdd(args []string) {
+// --- Auth commands ---
+
+func handleLogin(args []string) {
 	if len(args) < 1 {
-		output.Errorf("usage: airstrings profile add <name> --key <api-key> [--url <base-url>] [--env <env-id>]")
+		output.Errorf("usage: airstrings login <api-key> [--url <base-url>]")
 	}
 
-	name := args[0]
-	var apiKey, baseURL, envID string
+	apiKey := args[0]
+	var baseURL string
 
 	for i := 1; i < len(args); i++ {
 		switch args[i] {
-		case "--key", "-k":
-			i++
-			if i < len(args) {
-				apiKey = args[i]
-			}
 		case "--url", "--base-url":
 			i++
 			if i < len(args) {
 				baseURL = args[i]
 			}
-		case "--env":
-			i++
-			if i < len(args) {
-				envID = args[i]
-			}
 		}
 	}
 
-	if apiKey == "" {
-		output.Errorf("--key is required")
-	}
-
-	cfg, err := config.Load()
-	if err != nil {
-		output.Errorf("load config: %s", err)
-	}
-
-	// Auto-detect project ID and env ID by calling the API
+	// Validate key and auto-detect project
 	c := client.New(apiKey, baseURL, "", "")
 	proj, err := c.GetProject()
 	if err != nil {
-		output.Errorf("validate API key: %s", err)
+		output.Errorf("invalid API key: %s", err)
 	}
 
-	projectID := proj.ID
-
-	// If no env specified, auto-detect: prefer default, fall back to first
-	if envID == "" {
-		c2 := client.New(apiKey, baseURL, projectID, "")
-		envs, err := c2.ListEnvironments()
-		if err != nil {
-			output.Errorf("list environments: %s", err)
-		}
-		for _, e := range envs {
-			if e.IsDefault {
-				envID = e.ID
-				break
-			}
-		}
-		if envID == "" && len(envs) > 0 {
-			envID = envs[0].ID
-		}
-	}
-
-	cfg.Profiles[name] = config.Profile{
-		Name:      name,
-		APIKey:    apiKey,
-		BaseURL:   baseURL,
-		ProjectID: projectID,
-		EnvID:     envID,
-	}
-
-	if cfg.ActiveProfile == "" {
-		cfg.ActiveProfile = name
-	}
-
-	if err := cfg.Save(); err != nil {
-		output.Errorf("save config: %s", err)
-	}
-
-	output.Success(fmt.Sprintf("Profile %q added (project: %s, env: %s)", name, proj.Name, envID))
-	if cfg.ActiveProfile == name {
-		fmt.Println("  → set as active profile")
-	}
-}
-
-func handleProfileList() {
-	cfg, err := config.Load()
-	if err != nil {
-		output.Errorf("load config: %s", err)
-	}
-
-	if len(cfg.Profiles) == 0 {
-		fmt.Println("No profiles configured. Run: airstrings profile add <name> --key <api-key>")
-		return
-	}
-
-	if output.JSONMode {
-		output.JSON(cfg.Profiles)
-		return
-	}
-
-	headers := []string{"NAME", "PROJECT", "ENV", "URL", "ACTIVE"}
-	var rows [][]string
-	for name, p := range cfg.Profiles {
-		active := ""
-		if name == cfg.ActiveProfile {
-			active = "✓"
-		}
-		url := p.BaseURL
-		if url == "" {
-			url = "production"
-		}
-		rows = append(rows, []string{name, p.ProjectID, p.EnvID, url, active})
-	}
-	output.Table(headers, rows)
-}
-
-func handleProfileUse(name string) {
-	cfg, err := config.Load()
-	if err != nil {
-		output.Errorf("load config: %s", err)
-	}
-
-	if _, ok := cfg.Profiles[name]; !ok {
-		output.Errorf("profile %q not found", name)
-	}
-
-	cfg.ActiveProfile = name
-	if err := cfg.Save(); err != nil {
-		output.Errorf("save config: %s", err)
-	}
-
-	output.Success(fmt.Sprintf("Switched to profile %q", name))
-}
-
-func handleProfileRemove(name string) {
-	cfg, err := config.Load()
-	if err != nil {
-		output.Errorf("load config: %s", err)
-	}
-
-	if _, ok := cfg.Profiles[name]; !ok {
-		output.Errorf("profile %q not found", name)
-	}
-
-	delete(cfg.Profiles, name)
-	if cfg.ActiveProfile == name {
-		cfg.ActiveProfile = ""
-		for n := range cfg.Profiles {
-			cfg.ActiveProfile = n
-			break
-		}
-	}
-
-	if err := cfg.Save(); err != nil {
-		output.Errorf("save config: %s", err)
-	}
-
-	output.Success(fmt.Sprintf("Profile %q removed", name))
-}
-
-func handleProfileSetKey(args []string) {
-	newKey := args[0]
-	profileName := ""
-
-	for i := 1; i < len(args); i++ {
-		if args[i] == "--profile" || args[i] == "-p" {
-			i++
-			if i < len(args) {
-				profileName = args[i]
-			}
-		}
-	}
-
-	cfg, err := config.Load()
-	if err != nil {
-		output.Errorf("load config: %s", err)
-	}
-
-	if profileName == "" {
-		profileName = cfg.ActiveProfile
-	}
-	if profileName == "" {
-		output.Errorf("no active profile — specify one with --profile <name>")
-	}
-
-	prof, ok := cfg.Profiles[profileName]
-	if !ok {
-		output.Errorf("profile %q not found", profileName)
-	}
-
-	// Validate the new key against the API
-	c := client.New(newKey, prof.BaseURL, "", "")
-	proj, err := c.GetProject()
-	if err != nil {
-		output.Errorf("validate new key: %s", err)
-	}
-
-	oldPrefix := prof.APIKey[:8]
-	prof.APIKey = newKey
-	prof.ProjectID = proj.ID
-
-	// Re-detect env if it changed
-	c2 := client.New(newKey, prof.BaseURL, proj.ID, "")
+	// Auto-detect environments
+	c2 := client.New(apiKey, baseURL, proj.ID, "")
 	envs, err := c2.ListEnvironments()
-	if err == nil {
-		found := false
-		for _, e := range envs {
-			if e.ID == prof.EnvID {
-				found = true
-				break
-			}
-		}
-		if !found && len(envs) > 0 {
-			// Env no longer valid, pick default or first
-			for _, e := range envs {
-				if e.IsDefault {
-					prof.EnvID = e.ID
-					found = true
-					break
-				}
-			}
-			if !found {
-				prof.EnvID = envs[0].ID
-			}
-		}
+	if err != nil {
+		output.Errorf("list environments: %s", err)
 	}
 
-	cfg.Profiles[profileName] = prof
-	if err := cfg.Save(); err != nil {
-		output.Errorf("save config: %s", err)
-	}
-
-	output.Success(fmt.Sprintf("Profile %q key updated: %s... → %s... (project: %s)",
-		profileName, oldPrefix, newKey[:8], proj.Name))
-}
-
-func handleProfileShow() {
+	// Store a credential for each environment
 	cfg, err := config.Load()
 	if err != nil {
 		output.Errorf("load config: %s", err)
 	}
 
-	prof, err := cfg.Active()
+	var activeEnvID, activeEnvName string
+	for _, env := range envs {
+		cred := config.Credential{
+			APIKey:      apiKey,
+			BaseURL:     baseURL,
+			ProjectID:   proj.ID,
+			ProjectName: proj.Name,
+			EnvID:       env.ID,
+			EnvName:     env.Name,
+		}
+		cfg.AddOrUpdate(cred)
+
+		// Pick default env, or first
+		if env.IsDefault || activeEnvID == "" {
+			activeEnvID = env.ID
+			activeEnvName = env.Name
+		}
+	}
+
+	cfg.ActiveProject = proj.ID
+	if activeEnvID != "" {
+		cfg.ActiveEnv = activeEnvID
+	}
+
+	if err := cfg.Save(); err != nil {
+		output.Errorf("save config: %s", err)
+	}
+
+	output.Success(fmt.Sprintf("Logged in to %s / %s", proj.Name, activeEnvName))
+	if len(envs) > 1 {
+		fmt.Printf("  %d environments available. Use: airstrings env use <name>\n", len(envs))
+	}
+}
+
+func handleLogout(args []string) {
+	cfg, err := config.Load()
+	if err != nil {
+		output.Errorf("load config: %s", err)
+	}
+
+	cred, err := cfg.ActiveCredential()
 	if err != nil {
 		output.Errorf("%s", err)
 	}
 
-	if output.JSONMode {
-		output.JSON(prof)
-		return
+	name := cred.EnvName
+	cfg.Remove(cred.EnvID)
+
+	// Pick new active if available
+	if len(cfg.Credentials) > 0 {
+		cfg.ActiveProject = cfg.Credentials[0].ProjectID
+		cfg.ActiveEnv = cfg.Credentials[0].EnvID
+	} else {
+		cfg.ActiveProject = ""
+		cfg.ActiveEnv = ""
 	}
 
-	fmt.Printf("Active profile: %s\n", cfg.ActiveProfile)
-	fmt.Printf("  Project:  %s\n", prof.ProjectID)
-	fmt.Printf("  Env:      %s\n", prof.EnvID)
-	url := prof.BaseURL
-	if url == "" {
-		url = "https://api.airstrings.com (production)"
+	if err := cfg.Save(); err != nil {
+		output.Errorf("save config: %s", err)
 	}
-	fmt.Printf("  API URL:  %s\n", url)
-	fmt.Printf("  Key:      %s...%s\n", prof.APIKey[:8], prof.APIKey[len(prof.APIKey)-4:])
+
+	output.Success(fmt.Sprintf("Logged out from %s", name))
+}
+
+func handleStatus(args []string) {
+	cfg, err := config.Load()
+	if err != nil {
+		output.Errorf("load config: %s", err)
+	}
+
+	printStatus(cfg)
 }
 
 // --- Project commands ---
 
 func handleProject(args []string) {
+	if len(args) > 0 && args[0] == "use" {
+		if len(args) < 2 {
+			output.Errorf("usage: airstrings project use <name>")
+		}
+		cfg, err := config.Load()
+		if err != nil {
+			output.Errorf("load config: %s", err)
+		}
+		switchProject(cfg, args[1])
+		if err := cfg.Save(); err != nil {
+			output.Errorf("save config: %s", err)
+		}
+		cred, _ := cfg.ActiveCredential()
+		output.Success(fmt.Sprintf("Switched to %s / %s", cred.ProjectName, cred.EnvName))
+		return
+	}
+
 	c := mustClient()
 	proj, err := c.GetProject()
 	if err != nil {
@@ -504,12 +461,28 @@ func handleProject(args []string) {
 
 // --- Env commands ---
 
-func handleEnvs(args []string) {
-	c := mustClient()
+func handleEnv(args []string) {
+	if len(args) > 0 && args[0] == "use" {
+		if len(args) < 2 {
+			output.Errorf("usage: airstrings env use <name>")
+		}
+		cfg, err := config.Load()
+		if err != nil {
+			output.Errorf("load config: %s", err)
+		}
+		switchEnv(cfg, args[1])
+		if err := cfg.Save(); err != nil {
+			output.Errorf("save config: %s", err)
+		}
+		cred, _ := cfg.ActiveCredential()
+		output.Success(fmt.Sprintf("Switched to %s / %s", cred.ProjectName, cred.EnvName))
+		return
+	}
 
 	if len(args) > 0 && args[0] == "create" {
+		c := mustClient()
 		if len(args) < 2 {
-			output.Errorf("usage: airstrings envs create <name>")
+			output.Errorf("usage: airstrings env create <name>")
 		}
 		env, err := c.CreateEnvironment(client.CreateEnvRequest{Name: args[1]})
 		if err != nil {
@@ -519,17 +492,20 @@ func handleEnvs(args []string) {
 		return
 	}
 
+	c := mustClient()
 	envs, err := c.ListEnvironments()
 	if err != nil {
 		output.Errorf("list environments: %s", err)
 	}
+
+	cfg, _ := config.Load()
 
 	if output.JSONMode {
 		output.JSON(envs)
 		return
 	}
 
-	headers := []string{"ID", "NAME", "DEFAULT", "SEALED"}
+	headers := []string{"ID", "NAME", "DEFAULT", "SEALED", "ACTIVE"}
 	var rows [][]string
 	for _, e := range envs {
 		def := ""
@@ -540,7 +516,11 @@ func handleEnvs(args []string) {
 		if e.IsSealed {
 			sealed = "✓"
 		}
-		rows = append(rows, []string{e.ID, e.Name, def, sealed})
+		active := ""
+		if e.ID == cfg.ActiveEnv {
+			active = "✓"
+		}
+		rows = append(rows, []string{e.ID, e.Name, def, sealed, active})
 	}
 	output.Table(headers, rows)
 }
@@ -921,35 +901,18 @@ func handleImport(args []string) {
 // --- Workspace commands ---
 
 func handleInit(args []string) {
-	profileName := ""
-	for i := 0; i < len(args); i++ {
-		if args[i] == "--profile" || args[i] == "-p" {
-			i++
-			if i < len(args) {
-				profileName = args[i]
-			}
-		}
-	}
-
 	cfg, err := config.Load()
 	if err != nil {
 		output.Errorf("load config: %s", err)
 	}
 
-	if profileName == "" {
-		profileName = cfg.ActiveProfile
-	}
-	if profileName == "" {
-		output.Errorf("no active profile — run: airstrings profile add <name>")
-	}
-
-	prof, ok := cfg.Profiles[profileName]
-	if !ok {
-		output.Errorf("profile %q not found", profileName)
+	cred, err := cfg.ActiveCredential()
+	if err != nil {
+		output.Errorf("%s", err)
 	}
 
 	// Validate credentials
-	c := client.New(prof.APIKey, prof.BaseURL, prof.ProjectID, prof.EnvID)
+	c := client.New(cred.APIKey, cred.BaseURL, cred.ProjectID, cred.EnvID)
 	proj, err := c.GetProject()
 	if err != nil {
 		output.Errorf("validate credentials: %s", err)
@@ -961,10 +924,9 @@ func handleInit(args []string) {
 	}
 
 	wsCfg := workspace.WorkspaceConfig{
-		Profile:   profileName,
-		ProjectID: prof.ProjectID,
-		EnvID:     prof.EnvID,
-		BaseURL:   prof.BaseURL,
+		ProjectID: cred.ProjectID,
+		EnvID:     cred.EnvID,
+		BaseURL:   cred.BaseURL,
 	}
 	if err := workspace.Init(cwd, wsCfg); err != nil {
 		output.Errorf("init workspace: %s", err)
@@ -983,14 +945,14 @@ func handleInit(args []string) {
 
 	if output.JSONMode {
 		output.JSON(map[string]any{
-			"project":  proj.Name,
-			"profile":  profileName,
-			"sections": sectionCount,
+			"project":     proj.Name,
+			"environment": cred.EnvName,
+			"sections":    sectionCount,
 		})
 		return
 	}
 
-	output.Success(fmt.Sprintf("Workspace initialized for %q (profile: %s)", proj.Name, profileName))
+	output.Success(fmt.Sprintf("Workspace initialized for %s / %s", proj.Name, cred.EnvName))
 	if sectionCount > 0 {
 		fmt.Printf("  Sections: %d initialized\n", sectionCount)
 	}

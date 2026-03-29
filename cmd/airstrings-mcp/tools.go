@@ -13,12 +13,11 @@ import (
 var toolDefs = []ToolDef{
 	{
 		Name:        "airstrings_init",
-		Description: "Initialize an AirStrings workspace in the current directory. Creates .airstrings/ folder with config and section directories.",
+		Description: "Initialize an AirStrings workspace in the current directory. Creates .airstrings/ folder with config and section directories. Uses the active project and environment.",
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]Property{
-				"profile": {Type: "string", Description: "Profile name from ~/.airstrings/config.json. Uses active profile if omitted."},
-				"dir":     {Type: "string", Description: "Directory to initialize. Uses current working directory if omitted."},
+				"dir": {Type: "string", Description: "Directory to initialize. Uses current working directory if omitted."},
 			},
 		},
 	},
@@ -105,8 +104,7 @@ var toolHandlers = map[string]toolHandler{
 
 func handleToolInit(raw json.RawMessage) *CallToolResult {
 	var args struct {
-		Profile string `json:"profile"`
-		Dir     string `json:"dir"`
+		Dir string `json:"dir"`
 	}
 	json.Unmarshal(raw, &args)
 
@@ -115,17 +113,9 @@ func handleToolInit(raw json.RawMessage) *CallToolResult {
 		return errorResult(fmt.Sprintf("load config: %s", err))
 	}
 
-	profileName := args.Profile
-	if profileName == "" {
-		profileName = cfg.ActiveProfile
-	}
-	if profileName == "" {
-		return errorResult("no active profile — run: airstrings profile add <name>")
-	}
-
-	prof, ok := cfg.Profiles[profileName]
-	if !ok {
-		return errorResult(fmt.Sprintf("profile %q not found", profileName))
+	cred, err := cfg.ActiveCredential()
+	if err != nil {
+		return errorResult(fmt.Sprintf("not logged in — run: airstrings login <api-key>"))
 	}
 
 	dir := args.Dir
@@ -133,17 +123,16 @@ func handleToolInit(raw json.RawMessage) *CallToolResult {
 		dir, _ = os.Getwd()
 	}
 
-	c := client.New(prof.APIKey, prof.BaseURL, prof.ProjectID, prof.EnvID)
+	c := client.New(cred.APIKey, cred.BaseURL, cred.ProjectID, cred.EnvID)
 	proj, err := c.GetProject()
 	if err != nil {
 		return errorResult(fmt.Sprintf("validate credentials: %s", err))
 	}
 
 	wsCfg := workspace.WorkspaceConfig{
-		Profile:   profileName,
-		ProjectID: prof.ProjectID,
-		EnvID:     prof.EnvID,
-		BaseURL:   prof.BaseURL,
+		ProjectID: cred.ProjectID,
+		EnvID:     cred.EnvID,
+		BaseURL:   cred.BaseURL,
 	}
 	if err := workspace.Init(dir, wsCfg); err != nil {
 		return errorResult(fmt.Sprintf("init workspace: %s", err))
@@ -161,9 +150,9 @@ func handleToolInit(raw json.RawMessage) *CallToolResult {
 	}
 
 	result, _ := json.Marshal(map[string]any{
-		"project":  proj.Name,
-		"profile":  profileName,
-		"sections": sectionCount,
+		"project":     proj.Name,
+		"environment": cred.EnvName,
+		"sections":    sectionCount,
 	})
 	return textResult(string(result))
 }

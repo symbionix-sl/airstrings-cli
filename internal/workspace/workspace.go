@@ -18,7 +18,6 @@ const (
 
 // WorkspaceConfig is the project-local config stored in .airstrings/config.json.
 type WorkspaceConfig struct {
-	Profile   string `json:"profile"`
 	ProjectID string `json:"project_id"`
 	EnvID     string `json:"env_id"`
 	BaseURL   string `json:"base_url,omitempty"`
@@ -93,7 +92,7 @@ func LoadConfig(wsDir string) (*WorkspaceConfig, error) {
 	return &cfg, nil
 }
 
-// ResolveClient loads the global config, finds the referenced profile,
+// ResolveClient loads the global config, finds credentials by env ID,
 // and returns an API client configured for this workspace.
 func ResolveClient(wsCfg *WorkspaceConfig) (*client.Client, error) {
 	globalCfg, err := config.Load()
@@ -101,17 +100,17 @@ func ResolveClient(wsCfg *WorkspaceConfig) (*client.Client, error) {
 		return nil, fmt.Errorf("load global config: %w", err)
 	}
 
-	profile, ok := globalCfg.Profiles[wsCfg.Profile]
-	if !ok {
-		return nil, fmt.Errorf("profile %q not found in ~/.airstrings/config.json", wsCfg.Profile)
+	cred := globalCfg.FindByEnvID(wsCfg.EnvID)
+	if cred == nil {
+		return nil, fmt.Errorf("no credentials for environment %s — run: airstrings login <api-key>", wsCfg.EnvID)
 	}
 
 	baseURL := wsCfg.BaseURL
 	if baseURL == "" {
-		baseURL = profile.BaseURL
+		baseURL = cred.BaseURL
 	}
 
-	return client.New(profile.APIKey, baseURL, wsCfg.ProjectID, wsCfg.EnvID), nil
+	return client.New(cred.APIKey, baseURL, wsCfg.ProjectID, wsCfg.EnvID), nil
 }
 
 // DetectMode returns the workspace mode based on what files exist:

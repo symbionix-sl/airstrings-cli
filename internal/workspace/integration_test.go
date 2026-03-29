@@ -170,7 +170,6 @@ func TestIntegration_InitPushPullCycle(t *testing.T) {
 	wsDir := filepath.Join(dir, ".airstrings")
 
 	cfg := workspace.WorkspaceConfig{
-		Profile:   "test",
 		ProjectID: "proj-int",
 		EnvID:     "env-int",
 		BaseURL:   srv.URL,
@@ -283,7 +282,6 @@ func TestIntegration_SectionWorkflow(t *testing.T) {
 	dir := t.TempDir()
 	wsDir := filepath.Join(dir, ".airstrings")
 	cfg := workspace.WorkspaceConfig{
-		Profile:   "test",
 		ProjectID: "proj-int",
 		EnvID:     "env-int",
 		BaseURL:   srv.URL,
@@ -383,7 +381,7 @@ func TestIntegration_PushSingleSection(t *testing.T) {
 	dir := t.TempDir()
 	wsDir := filepath.Join(dir, ".airstrings")
 	workspace.Init(dir, workspace.WorkspaceConfig{
-		Profile: "test", ProjectID: "proj-int", EnvID: "env-int", BaseURL: srv.URL,
+		ProjectID: "proj-int", EnvID: "env-int", BaseURL: srv.URL,
 	})
 
 	// Add strings to two sections
@@ -505,7 +503,7 @@ func TestIntegration_UpdateAndRepush(t *testing.T) {
 	dir := t.TempDir()
 	wsDir := filepath.Join(dir, ".airstrings")
 	workspace.Init(dir, workspace.WorkspaceConfig{
-		Profile: "test", ProjectID: "proj-int", EnvID: "env-int", BaseURL: srv.URL,
+		ProjectID: "proj-int", EnvID: "env-int", BaseURL: srv.URL,
 	})
 
 	// First push
@@ -543,7 +541,7 @@ func TestIntegration_MixedSectionsAndFlat(t *testing.T) {
 	dir := t.TempDir()
 	wsDir := filepath.Join(dir, ".airstrings")
 	workspace.Init(dir, workspace.WorkspaceConfig{
-		Profile: "test", ProjectID: "proj-int", EnvID: "env-int", BaseURL: srv.URL,
+		ProjectID: "proj-int", EnvID: "env-int", BaseURL: srv.URL,
 	})
 
 	// Flat strings (no section)
@@ -599,7 +597,7 @@ func TestIntegration_PullSingleSection(t *testing.T) {
 	dir := t.TempDir()
 	wsDir := filepath.Join(dir, ".airstrings")
 	workspace.Init(dir, workspace.WorkspaceConfig{
-		Profile: "test", ProjectID: "proj-int", EnvID: "env-int", BaseURL: srv.URL,
+		ProjectID: "proj-int", EnvID: "env-int", BaseURL: srv.URL,
 	})
 
 	// Pull only home section
@@ -637,7 +635,7 @@ func TestIntegration_CSVSpecialCharacters(t *testing.T) {
 	dir := t.TempDir()
 	wsDir := filepath.Join(dir, ".airstrings")
 	workspace.Init(dir, workspace.WorkspaceConfig{
-		Profile: "test", ProjectID: "proj-int", EnvID: "env-int", BaseURL: srv.URL,
+		ProjectID: "proj-int", EnvID: "env-int", BaseURL: srv.URL,
 	})
 
 	path := workspace.CSVPath(wsDir, "")
@@ -698,7 +696,7 @@ func TestIntegration_CSVSpecialCharacters(t *testing.T) {
 func TestIntegration_FindFromSubdirectory(t *testing.T) {
 	dir := t.TempDir()
 	workspace.Init(dir, workspace.WorkspaceConfig{
-		Profile: "test", ProjectID: "p", EnvID: "e",
+		ProjectID: "p", EnvID: "e",
 	})
 
 	// Create nested subdirectories

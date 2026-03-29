@@ -129,7 +129,7 @@ func TestMCP_ToolCall_LocalSet(t *testing.T) {
 	dir := t.TempDir()
 	wsDir := filepath.Join(dir, ".airstrings")
 	workspace.Init(dir, workspace.WorkspaceConfig{
-		Profile: "test", ProjectID: "p", EnvID: "e",
+		ProjectID: "p", EnvID: "e",
 	})
 
 	// Change to workspace dir so Find() works
@@ -185,7 +185,7 @@ func TestMCP_ToolCall_LocalSetWithSection(t *testing.T) {
 	dir := t.TempDir()
 	wsDir := filepath.Join(dir, ".airstrings")
 	workspace.Init(dir, workspace.WorkspaceConfig{
-		Profile: "test", ProjectID: "p", EnvID: "e",
+		ProjectID: "p", EnvID: "e",
 	})
 
 	origDir, _ := os.Getwd()
@@ -225,7 +225,7 @@ func TestMCP_ToolCall_LocalRm(t *testing.T) {
 	dir := t.TempDir()
 	wsDir := filepath.Join(dir, ".airstrings")
 	workspace.Init(dir, workspace.WorkspaceConfig{
-		Profile: "test", ProjectID: "p", EnvID: "e",
+		ProjectID: "p", EnvID: "e",
 	})
 
 	// Pre-populate
@@ -269,7 +269,7 @@ func TestMCP_ToolCall_LocalLs(t *testing.T) {
 	dir := t.TempDir()
 	wsDir := filepath.Join(dir, ".airstrings")
 	workspace.Init(dir, workspace.WorkspaceConfig{
-		Profile: "test", ProjectID: "p", EnvID: "e",
+		ProjectID: "p", EnvID: "e",
 	})
 
 	// Add some strings
@@ -347,7 +347,7 @@ func TestMCP_UnknownMethod(t *testing.T) {
 func TestMCP_ToolCall_LocalSetMissingKey(t *testing.T) {
 	dir := t.TempDir()
 	workspace.Init(dir, workspace.WorkspaceConfig{
-		Profile: "test", ProjectID: "p", EnvID: "e",
+		ProjectID: "p", EnvID: "e",
 	})
 
 	origDir, _ := os.Getwd()
@@ -374,7 +374,7 @@ func TestMCP_ToolCall_LocalSetMissingKey(t *testing.T) {
 func TestMCP_ToolCall_LocalSetInvalidJSON(t *testing.T) {
 	dir := t.TempDir()
 	workspace.Init(dir, workspace.WorkspaceConfig{
-		Profile: "test", ProjectID: "p", EnvID: "e",
+		ProjectID: "p", EnvID: "e",
 	})
 
 	origDir, _ := os.Getwd()
@@ -410,7 +410,7 @@ func TestMCP_FullWorkflow(t *testing.T) {
 	dir := t.TempDir()
 	wsDir := filepath.Join(dir, ".airstrings")
 	workspace.Init(dir, workspace.WorkspaceConfig{
-		Profile: "test", ProjectID: "p", EnvID: "e",
+		ProjectID: "p", EnvID: "e",
 	})
 
 	origDir, _ := os.Getwd()

@@ -11,7 +11,6 @@ func TestInit(t *testing.T) {
 	dir := t.TempDir()
 
 	cfg := WorkspaceConfig{
-		Profile:   "test",
 		ProjectID: "proj-123",
 		EnvID:     "env-456",
 	}
@@ -44,14 +43,14 @@ func TestInit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to load config: %v", err)
 	}
-	if loaded.Profile != "test" || loaded.ProjectID != "proj-123" || loaded.EnvID != "env-456" {
+	if loaded.ProjectID != "proj-123" || loaded.EnvID != "env-456" {
 		t.Errorf("unexpected config: %+v", loaded)
 	}
 }
 
 func TestInit_AlreadyExists(t *testing.T) {
 	dir := t.TempDir()
-	cfg := WorkspaceConfig{Profile: "test", ProjectID: "p1", EnvID: "e1"}
+	cfg := WorkspaceConfig{ProjectID: "p1", EnvID: "e1"}
 
 	Init(dir, cfg)
 	// Init again should overwrite without error
@@ -71,7 +70,7 @@ func TestLoadConfig(t *testing.T) {
 	wsDir := filepath.Join(dir, ".airstrings")
 	os.MkdirAll(wsDir, 0700)
 
-	cfg := WorkspaceConfig{Profile: "prod", ProjectID: "p1", EnvID: "e1", BaseURL: "https://custom.api"}
+	cfg := WorkspaceConfig{ProjectID: "p1", EnvID: "e1", BaseURL: "https://custom.api"}
 	data, _ := json.MarshalIndent(cfg, "", "  ")
 	os.WriteFile(filepath.Join(wsDir, "config.json"), data, 0600)
 
@@ -79,7 +78,7 @@ func TestLoadConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if loaded.Profile != "prod" || loaded.BaseURL != "https://custom.api" {
+	if loaded.ProjectID != "p1" || loaded.BaseURL != "https://custom.api" {
 		t.Errorf("unexpected config: %+v", loaded)
 	}
 }
