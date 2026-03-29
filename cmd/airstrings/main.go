@@ -228,7 +228,7 @@ func handleProfileAdd(args []string) {
 			if i < len(args) {
 				apiKey = args[i]
 			}
-		case "--url":
+		case "--url", "--base-url":
 			i++
 			if i < len(args) {
 				baseURL = args[i]
