@@ -74,7 +74,7 @@ When adding a new command:
 
 - Stored per-project in `.airstrings/config.json` (no global config)
 - Workspace is found by walking up from cwd (like `.git`)
-- `init` creates the workspace, `login` stores credentials in it
+- `init <api-key>` creates the workspace and stores credentials in one step
 - Each workspace is self-contained: credentials, active env, project info
 - `env use` switches active environment within the workspace
 - Config dir created with `0700` permissions, files with `0600`
@@ -98,7 +98,7 @@ Local workspace for AI-friendly string management. Initialized via `airstrings i
   login/login.csv             # Section "login" strings
 ```
 
-- `init` creates empty workspace, `login` populates credentials
+- `init <api-key>` creates workspace with credentials and section dirs
 - `local set/rm/ls` manipulate CSVs locally without API calls
 - `push` upserts all local strings to API via `UpsertString` per key (creates sections remotely if needed)
 - `pull` downloads all remote strings into organized CSVs (overwrites local state)

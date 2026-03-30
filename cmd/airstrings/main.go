@@ -44,9 +44,9 @@ func main() {
 
 	switch cmd {
 	case "login":
-		handleLogin(args)
+		output.Errorf("'login' has been replaced by 'init'. Use: airstrings init <api-key>")
 	case "logout":
-		handleLogout(args)
+		output.Errorf("'logout' has been replaced. Use: airstrings env rm <name>")
 	case "status":
 		handleStatus(args)
 	case "project":
@@ -96,15 +96,15 @@ func printUsage() {
 Usage: airstrings <command> [options]
 
 Setup:
-  init                                  Initialize workspace in current directory
-  login <api-key> [--url <base-url>]    Authenticate and store credentials
-  logout                                Remove current credential
+  init <api-key> [--url <base-url>]     Initialize workspace and authenticate
   status                                Show active project, environment, and key
 
 Navigation:
   project                               Show current project info
   env                                   List environments (✓ = active)
   env use <name>                        Switch active environment
+  env add <api-key> [--url <base-url>]  Add environment credentials
+  env rm <name>                         Remove environment credentials
   -e -u <env-name>                      Switch environment (shorthand)
   locales                               List locales with string counts
 
@@ -263,14 +263,13 @@ func printStatus(wsCfg *workspace.WorkspaceConfig) {
 
 // --- Auth commands ---
 
-func handleLogin(args []string) {
+// parseKeyAndURL extracts an API key and optional --url/--base-url from args.
+func parseKeyAndURL(args []string) (string, string) {
 	if len(args) < 1 {
-		output.Errorf("usage: airstrings login <api-key> [--url <base-url>]")
+		output.Errorf("usage: provide an API key")
 	}
-
 	apiKey := args[0]
 	var baseURL string
-
 	for i := 1; i < len(args); i++ {
 		switch args[i] {
 		case "--url", "--base-url":
@@ -280,27 +279,27 @@ func handleLogin(args []string) {
 			}
 		}
 	}
+	return apiKey, baseURL
+}
 
-	// Validate key and auto-detect project
+// validateAndDiscover validates an API key and returns the project and environments.
+func validateAndDiscover(apiKey, baseURL string) (*client.Project, []client.Environment) {
 	c := client.New(apiKey, baseURL, "", "")
 	proj, err := c.GetProject()
 	if err != nil {
 		output.Errorf("invalid API key: %s", err)
 	}
 
-	// Auto-detect environments
 	c2 := client.New(apiKey, baseURL, proj.ID, "")
 	envs, err := c2.ListEnvironments()
 	if err != nil {
 		output.Errorf("list environments: %s", err)
 	}
+	return proj, envs
+}
 
-	// Store credentials in workspace config
-	wsDir, wsCfg := mustWorkspace()
-
-	wsCfg.ProjectID = proj.ID
-	wsCfg.ProjectName = proj.Name
-
+// addCredentials adds environment credentials to a workspace config and returns the active env name.
+func addCredentials(wsCfg *workspace.WorkspaceConfig, apiKey, baseURL string, envs []client.Environment) string {
 	var activeEnvID, activeEnvName string
 	for _, env := range envs {
 		cred := workspace.Credential{
@@ -311,50 +310,17 @@ func handleLogin(args []string) {
 		}
 		wsCfg.AddOrUpdate(cred)
 
-		// Pick default env, or first
 		if env.IsDefault || activeEnvID == "" {
 			activeEnvID = env.ID
 			activeEnvName = env.Name
 		}
 	}
 
-	if activeEnvID != "" {
+	// Only set active env if not already set
+	if wsCfg.ActiveEnv == "" && activeEnvID != "" {
 		wsCfg.ActiveEnv = activeEnvID
 	}
-
-	if err := workspace.SaveConfig(wsDir, wsCfg); err != nil {
-		output.Errorf("save workspace: %s", err)
-	}
-
-	output.Success(fmt.Sprintf("Logged in to %s / %s", proj.Name, activeEnvName))
-	if len(envs) > 1 {
-		fmt.Printf("  %d environments available. Use: airstrings env use <name>\n", len(envs))
-	}
-}
-
-func handleLogout(args []string) {
-	wsDir, wsCfg := mustWorkspace()
-
-	cred, err := wsCfg.ActiveCredential()
-	if err != nil {
-		output.Errorf("%s", err)
-	}
-
-	name := cred.EnvName
-	wsCfg.Remove(cred.EnvID)
-
-	// Pick new active if available
-	if len(wsCfg.Credentials) > 0 {
-		wsCfg.ActiveEnv = wsCfg.Credentials[0].EnvID
-	} else {
-		wsCfg.ActiveEnv = ""
-	}
-
-	if err := workspace.SaveConfig(wsDir, wsCfg); err != nil {
-		output.Errorf("save workspace: %s", err)
-	}
-
-	output.Success(fmt.Sprintf("Logged out from %s", name))
+	return activeEnvName
 }
 
 func handleStatus(args []string) {
@@ -404,6 +370,70 @@ func handleEnv(args []string) {
 		}
 		cred, _ := wsCfg.ActiveCredential()
 		output.Success(fmt.Sprintf("Switched to %s / %s", wsCfg.ProjectName, cred.EnvName))
+		return
+	}
+
+	if len(args) > 0 && args[0] == "add" {
+		if len(args) < 2 {
+			output.Errorf("usage: airstrings env add <api-key> [--url <base-url>]")
+		}
+		apiKey, baseURL := parseKeyAndURL(args[1:])
+		wsDir, wsCfg := mustWorkspace()
+
+		// Validate and discover environments for this key
+		_, envs := validateAndDiscover(apiKey, baseURL)
+		activeEnvName := addCredentials(wsCfg, apiKey, baseURL, envs)
+
+		if err := workspace.SaveConfig(wsDir, wsCfg); err != nil {
+			output.Errorf("save workspace: %s", err)
+		}
+
+		output.Success(fmt.Sprintf("Added %d environment(s): %s", len(envs), activeEnvName))
+		for _, env := range envs {
+			marker := "  "
+			if env.ID == wsCfg.ActiveEnv {
+				marker = "✓ "
+			}
+			fmt.Printf("  %s%s\n", marker, env.Name)
+		}
+		return
+	}
+
+	if len(args) > 0 && args[0] == "rm" {
+		if len(args) < 2 {
+			output.Errorf("usage: airstrings env rm <name>")
+		}
+		wsDir, wsCfg := mustWorkspace()
+
+		// Find by name (case-insensitive) or ID
+		var target *workspace.Credential
+		for _, cred := range wsCfg.Credentials {
+			if strings.EqualFold(cred.EnvName, args[1]) || cred.EnvID == args[1] {
+				target = &cred
+				break
+			}
+		}
+		if target == nil {
+			output.Errorf("environment %q not found", args[1])
+		}
+
+		name := target.EnvName
+		wsCfg.Remove(target.EnvID)
+
+		// Pick new active if we removed the active one
+		if wsCfg.ActiveEnv == target.EnvID {
+			if len(wsCfg.Credentials) > 0 {
+				wsCfg.ActiveEnv = wsCfg.Credentials[0].EnvID
+			} else {
+				wsCfg.ActiveEnv = ""
+			}
+		}
+
+		if err := workspace.SaveConfig(wsDir, wsCfg); err != nil {
+			output.Errorf("save workspace: %s", err)
+		}
+
+		output.Success(fmt.Sprintf("Removed %s", name))
 		return
 	}
 
@@ -829,6 +859,12 @@ func handleImport(args []string) {
 // --- Workspace commands ---
 
 func handleInit(args []string) {
+	if len(args) < 1 {
+		output.Errorf("usage: airstrings init <api-key> [--url <base-url>]")
+	}
+
+	apiKey, baseURL := parseKeyAndURL(args)
+
 	cwd, err := os.Getwd()
 	if err != nil {
 		output.Errorf("get working directory: %s", err)
@@ -840,12 +876,48 @@ func handleInit(args []string) {
 		output.Errorf("workspace already exists at %s", wsDir)
 	}
 
-	wsCfg := workspace.WorkspaceConfig{}
+	// Validate key and discover project/environments
+	proj, envs := validateAndDiscover(apiKey, baseURL)
+
+	// Create workspace with credentials
+	wsCfg := workspace.WorkspaceConfig{
+		ProjectID:   proj.ID,
+		ProjectName: proj.Name,
+	}
+	activeEnvName := addCredentials(&wsCfg, apiKey, baseURL, envs)
+
 	if err := workspace.Init(cwd, wsCfg); err != nil {
 		output.Errorf("init workspace: %s", err)
 	}
 
-	output.Success("Workspace initialized. Run: airstrings login <api-key>")
+	// Create section dirs for remote sections
+	c := client.New(apiKey, baseURL, proj.ID, wsCfg.ActiveEnv)
+	sections, err := c.ListSections()
+	sectionCount := 0
+	if err == nil && len(sections.Data) > 0 {
+		for _, sec := range sections.Data {
+			workspace.CreateSectionDir(wsDir, sec.Name)
+		}
+		sectionCount = len(sections.Data)
+	}
+
+	if output.JSONMode {
+		output.JSON(map[string]any{
+			"project":      proj.Name,
+			"environment":  activeEnvName,
+			"environments": len(envs),
+			"sections":     sectionCount,
+		})
+		return
+	}
+
+	output.Success(fmt.Sprintf("Workspace initialized for %s / %s", proj.Name, activeEnvName))
+	if len(envs) > 1 {
+		fmt.Printf("  %d environments available. Use: airstrings env use <name>\n", len(envs))
+	}
+	if sectionCount > 0 {
+		fmt.Printf("  Sections: %d\n", sectionCount)
+	}
 }
 
 func handleLocal(args []string) {

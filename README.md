@@ -26,22 +26,23 @@ go build -o airstrings ./cmd/airstrings
 
 ## Setup
 
-Initialize a workspace in your project directory, then log in:
+Initialize a workspace in your project directory:
 
 ```bash
 cd my-project
-airstrings init
-airstrings login ask_live_xxxxxxxxxxxx
+airstrings init ask_live_xxxxxxxxxxxx
 ```
 
-This validates the key, auto-detects your project and environments, and stores credentials in `.airstrings/config.json`. Each project has its own workspace — no shared global config.
+This validates the key, auto-detects your project and environments, and stores everything in `.airstrings/config.json`. Each project has its own workspace — no shared global config.
 
-### Switching environments
+### Environments
 
 ```bash
 airstrings env                      # list environments (✓ = active)
 airstrings env use staging          # switch to staging
-airstrings -e -u staging            # shorthand
+airstrings env add <api-key>        # add credentials for another environment
+airstrings env rm staging           # remove environment credentials
+airstrings -e -u staging            # shorthand for env use
 airstrings status                   # show current project, env, and key
 ```
 
@@ -100,9 +101,8 @@ airstrings import status imp_xxxxx  # Check import progress
 The workspace workflow lets you manage strings locally and sync with the API. This is the recommended workflow for AI-assisted string management.
 
 ```bash
-# Initialize workspace and log in
-airstrings init
-airstrings login ask_live_xxxxxxxxxxxx
+# Initialize workspace
+airstrings init ask_live_xxxxxxxxxxxx
 
 # Add strings locally (no API calls)
 airstrings local set onboarding.welcome en="Welcome!" it="Benvenuto!" --section onboarding
@@ -199,11 +199,11 @@ airstrings project --json | jq '.name'
 Config is stored per-project in `.airstrings/config.json` (like `.git/config`). No global config — each workspace is self-contained with its own credentials and active environment.
 
 ```bash
-airstrings init                                   # create workspace
-airstrings login <api-key> [--url <base-url>]     # add credentials
-airstrings logout                                 # remove current credential
-airstrings status                                 # show active context
+airstrings init <api-key> [--url <base-url>]      # create workspace and authenticate
+airstrings env add <api-key> [--url <base-url>]   # add environment credentials
+airstrings env rm <name>                          # remove environment credentials
 airstrings env use <name>                         # switch environment
+airstrings status                                 # show active context
 ```
 
 The workspace is found by walking up the directory tree, so commands work from any subdirectory.
