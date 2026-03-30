@@ -151,7 +151,7 @@ Flags:
 func mustWorkspace() (string, *workspace.WorkspaceConfig) {
 	wsDir, err := workspace.Find()
 	if err != nil {
-		output.Errorf("no workspace found — run: airstrings init")
+		output.Errorf("no workspace found — run: airstrings init <api-key>")
 	}
 	wsCfg, err := workspace.LoadConfig(wsDir)
 	if err != nil {
