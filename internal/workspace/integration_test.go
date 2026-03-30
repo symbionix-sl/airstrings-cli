@@ -171,8 +171,10 @@ func TestIntegration_InitPushPullCycle(t *testing.T) {
 
 	cfg := workspace.WorkspaceConfig{
 		ProjectID: "proj-int",
-		EnvID:     "env-int",
-		BaseURL:   srv.URL,
+		ActiveEnv: "env-int",
+		Credentials: []workspace.Credential{
+			{APIKey: "test-key", BaseURL: srv.URL, EnvID: "env-int", EnvName: "production"},
+		},
 	}
 	if err := workspace.Init(dir, cfg); err != nil {
 		t.Fatalf("init: %v", err)
@@ -283,8 +285,10 @@ func TestIntegration_SectionWorkflow(t *testing.T) {
 	wsDir := filepath.Join(dir, ".airstrings")
 	cfg := workspace.WorkspaceConfig{
 		ProjectID: "proj-int",
-		EnvID:     "env-int",
-		BaseURL:   srv.URL,
+		ActiveEnv: "env-int",
+		Credentials: []workspace.Credential{
+			{APIKey: "test-key", BaseURL: srv.URL, EnvID: "env-int", EnvName: "production"},
+		},
 	}
 	workspace.Init(dir, cfg)
 
@@ -381,7 +385,7 @@ func TestIntegration_PushSingleSection(t *testing.T) {
 	dir := t.TempDir()
 	wsDir := filepath.Join(dir, ".airstrings")
 	workspace.Init(dir, workspace.WorkspaceConfig{
-		ProjectID: "proj-int", EnvID: "env-int", BaseURL: srv.URL,
+		ProjectID: "proj-int", ActiveEnv: "env-int", Credentials: []workspace.Credential{{APIKey: "test-key", BaseURL: srv.URL, EnvID: "env-int", EnvName: "production"}},
 	})
 
 	// Add strings to two sections
@@ -503,7 +507,7 @@ func TestIntegration_UpdateAndRepush(t *testing.T) {
 	dir := t.TempDir()
 	wsDir := filepath.Join(dir, ".airstrings")
 	workspace.Init(dir, workspace.WorkspaceConfig{
-		ProjectID: "proj-int", EnvID: "env-int", BaseURL: srv.URL,
+		ProjectID: "proj-int", ActiveEnv: "env-int", Credentials: []workspace.Credential{{APIKey: "test-key", BaseURL: srv.URL, EnvID: "env-int", EnvName: "production"}},
 	})
 
 	// First push
@@ -541,7 +545,7 @@ func TestIntegration_MixedSectionsAndFlat(t *testing.T) {
 	dir := t.TempDir()
 	wsDir := filepath.Join(dir, ".airstrings")
 	workspace.Init(dir, workspace.WorkspaceConfig{
-		ProjectID: "proj-int", EnvID: "env-int", BaseURL: srv.URL,
+		ProjectID: "proj-int", ActiveEnv: "env-int", Credentials: []workspace.Credential{{APIKey: "test-key", BaseURL: srv.URL, EnvID: "env-int", EnvName: "production"}},
 	})
 
 	// Flat strings (no section)
@@ -597,7 +601,7 @@ func TestIntegration_PullSingleSection(t *testing.T) {
 	dir := t.TempDir()
 	wsDir := filepath.Join(dir, ".airstrings")
 	workspace.Init(dir, workspace.WorkspaceConfig{
-		ProjectID: "proj-int", EnvID: "env-int", BaseURL: srv.URL,
+		ProjectID: "proj-int", ActiveEnv: "env-int", Credentials: []workspace.Credential{{APIKey: "test-key", BaseURL: srv.URL, EnvID: "env-int", EnvName: "production"}},
 	})
 
 	// Pull only home section
@@ -635,7 +639,7 @@ func TestIntegration_CSVSpecialCharacters(t *testing.T) {
 	dir := t.TempDir()
 	wsDir := filepath.Join(dir, ".airstrings")
 	workspace.Init(dir, workspace.WorkspaceConfig{
-		ProjectID: "proj-int", EnvID: "env-int", BaseURL: srv.URL,
+		ProjectID: "proj-int", ActiveEnv: "env-int", Credentials: []workspace.Credential{{APIKey: "test-key", BaseURL: srv.URL, EnvID: "env-int", EnvName: "production"}},
 	})
 
 	path := workspace.CSVPath(wsDir, "")
@@ -696,7 +700,7 @@ func TestIntegration_CSVSpecialCharacters(t *testing.T) {
 func TestIntegration_FindFromSubdirectory(t *testing.T) {
 	dir := t.TempDir()
 	workspace.Init(dir, workspace.WorkspaceConfig{
-		ProjectID: "p", EnvID: "e",
+		ProjectID: "p", ActiveEnv: "e",
 	})
 
 	// Create nested subdirectories

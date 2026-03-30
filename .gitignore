@@ -21,3 +21,6 @@ coverage.out
 # Environment
 .env
 .env.*
+
+# Nested repos
+/homebrew/

@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 )
 
@@ -109,15 +110,27 @@ func (c *Client) do(method, path string, query url.Values, body any, result any)
 		return fmt.Errorf("read response: %w", err)
 	}
 
+	ct := resp.Header.Get("Content-Type")
+	looksLikeJSON := len(respBody) > 0 && (respBody[0] == '{' || respBody[0] == '[')
+	isJSON := strings.Contains(ct, "json") || (ct == "" && looksLikeJSON)
+
 	if resp.StatusCode >= 400 {
 		var apiErr APIError
 		apiErr.StatusCode = resp.StatusCode
-		_ = json.Unmarshal(respBody, &apiErr.Body)
+		if isJSON || looksLikeJSON {
+			_ = json.Unmarshal(respBody, &apiErr.Body)
+		}
+		if apiErr.Body.Error.Message == "" && !isJSON && !looksLikeJSON {
+			apiErr.Body.Error.Message = fmt.Sprintf("unexpected response from %s (got %s, expected JSON) — check your --url value", c.baseURL, ct)
+		}
 		return &apiErr
 	}
 
 	if result != nil && len(respBody) > 0 {
 		if err := json.Unmarshal(respBody, result); err != nil {
+			if !isJSON && !looksLikeJSON {
+				return fmt.Errorf("unexpected response from %s (got %s, expected JSON) — check your --url value", c.baseURL, ct)
+			}
 			return fmt.Errorf("decode response: %w", err)
 		}
 	}

@@ -9,7 +9,7 @@ airstrings <command> [options] [--json]
 ```
 
 Binary: `cmd/airstrings/main.go` — single entry point, no subpackage commands.
-Config: `~/.airstrings/config.json` — multi-profile, auto-detected project/env.
+Config: `.airstrings/config.json` — per-project workspace with credentials and active env.
 
 ## Architecture
 
@@ -25,13 +25,11 @@ internal/
     projects.go             # Project, environment, locale, bundle operations
     strings.go              # String CRUD, sections, ListAllStrings
     imports.go              # CSV import, status polling
-  config/                   # Profile and config management (~/.airstrings/)
-    config.go               # Load/save/active profile
   output/                   # Terminal output (table, JSON, errors)
     output.go               # Table via tabwriter, JSON mode, Success/Errorf
-  workspace/                # Local workspace management (.airstrings/ folder)
+  workspace/                # Workspace management (.airstrings/ folder)
     csv.go                  # Pure CSV read/write/edit operations
-    workspace.go            # Init, Find, LoadConfig, DetectMode
+    workspace.go            # Init, Find, LoadConfig, credentials, ResolveClient
     sync.go                 # Push/pull (bridges local CSVs and API client)
 ```
 
@@ -74,11 +72,12 @@ When adding a new command:
 
 ### Config
 
-- Stored at `~/.airstrings/config.json` with `0600` permissions
-- Credential-based: each credential maps an API key to a project+environment
-- `login` validates the key and auto-detects project, environments, and names
-- `env use` / `project use` switch active context
-- Config dir created with `0700` permissions
+- Stored per-project in `.airstrings/config.json` (no global config)
+- Workspace is found by walking up from cwd (like `.git`)
+- `init` creates the workspace, `login` stores credentials in it
+- Each workspace is self-contained: credentials, active env, project info
+- `env use` switches active environment within the workspace
+- Config dir created with `0700` permissions, files with `0600`
 
 ### Output
 
@@ -93,13 +92,13 @@ Local workspace for AI-friendly string management. Initialized via `airstrings i
 
 ```
 .airstrings/                  # Created by `airstrings init` in project root
-  config.json                 # Project-local config (project/env IDs)
+  config.json                 # Workspace config (credentials, project, active env)
   strings.csv                 # Unsectioned strings (flat mode)
   home/home.csv               # Section "home" strings
   login/login.csv             # Section "login" strings
 ```
 
-- `init` auto-detects project/env from active profile, creates section dirs from remote sections
+- `init` creates empty workspace, `login` populates credentials
 - `local set/rm/ls` manipulate CSVs locally without API calls
 - `push` upserts all local strings to API via `UpsertString` per key (creates sections remotely if needed)
 - `pull` downloads all remote strings into organized CSVs (overwrites local state)
@@ -127,7 +126,7 @@ Tools: `airstrings_init`, `airstrings_local_set`, `airstrings_local_rm`, `airstr
 
 ## Non-Negotiables
 
-1. **No secrets in source.** API keys only in `~/.airstrings/config.json` (0600). Never log or print full keys — show first 8 and last 4 chars only
+1. **No secrets in source.** API keys only in `.airstrings/config.json` (0600). Never log or print full keys — show first 8 and last 4 chars only
 2. **No external dependencies.** stdlib is sufficient for this CLI. If you think you need a dep, you're wrong
 3. **No command framework.** The switch-based routing is deliberate. It keeps the binary small and the code greppable
 4. **Exit on error.** Handlers do not return errors. `output.Errorf()` is the only error path

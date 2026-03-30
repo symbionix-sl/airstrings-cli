@@ -10,7 +10,6 @@ import (
 	"strings"
 
 	"github.com/symbionix/airstrings-cli/internal/client"
-	"github.com/symbionix/airstrings-cli/internal/config"
 	"github.com/symbionix/airstrings-cli/internal/output"
 	"github.com/symbionix/airstrings-cli/internal/workspace"
 )
@@ -96,22 +95,18 @@ func printUsage() {
 
 Usage: airstrings <command> [options]
 
-Auth:
+Setup:
+  init                                  Initialize workspace in current directory
   login <api-key> [--url <base-url>]    Authenticate and store credentials
   logout                                Remove current credential
   status                                Show active project, environment, and key
 
 Navigation:
   project                               Show current project info
-  project use <name>                    Switch active project
   env                                   List environments (✓ = active)
   env use <name>                        Switch active environment
+  -e -u <env-name>                      Switch environment (shorthand)
   locales                               List locales with string counts
-
-Shorthands (chainable):
-  -p -u <project-name>                  Switch project
-  -e -u <env-name>                      Switch environment
-  -p -u <project> -e -u <env>           Switch both
 
 Strings:
   strings list [--locale <loc>] [--section <id>] [--limit <n>]
@@ -134,7 +129,6 @@ Import:
   import status <id>      Check import status
 
 Workspace:
-  init                                             Initialize local workspace
   local set <key> <locale>=<value> [--format text|icu] [--section <name>]
   local rm <key> [--locale <loc>] [--section <name>]
   local ls [--section <name>]                      List local strings
@@ -153,44 +147,44 @@ Flags:
 `)
 }
 
-// mustClient loads config and returns a ready API client.
-func mustClient() *client.Client {
-	cfg, err := config.Load()
+// mustWorkspace finds and loads the workspace config, or exits with an error.
+func mustWorkspace() (string, *workspace.WorkspaceConfig) {
+	wsDir, err := workspace.Find()
 	if err != nil {
-		output.Errorf("load config: %s", err)
+		output.Errorf("no workspace found — run: airstrings init")
 	}
+	wsCfg, err := workspace.LoadConfig(wsDir)
+	if err != nil {
+		output.Errorf("load workspace: %s", err)
+	}
+	return wsDir, wsCfg
+}
 
-	cred, err := cfg.ActiveCredential()
+// mustClient loads workspace config and returns a ready API client.
+func mustClient() *client.Client {
+	_, wsCfg := mustWorkspace()
+	c, err := workspace.ResolveClient(wsCfg)
 	if err != nil {
 		output.Errorf("%s", err)
 	}
-
-	return client.New(cred.APIKey, cred.BaseURL, cred.ProjectID, cred.EnvID)
+	return c
 }
 
-// handleShorthandFlags processes -p -u <name> and -e -u <name> flags.
+// handleShorthandFlags processes -e -u <name> flags.
 // Returns true if flags were handled (no further command processing needed).
 func handleShorthandFlags(args []string) bool {
 	if len(args) == 0 || args[0][0] != '-' || args[0] == "--json" || args[0] == "--help" || args[0] == "--version" || args[0] == "-h" {
 		return false
 	}
 
-	cfg, err := config.Load()
-	if err != nil {
-		output.Errorf("load config: %s", err)
-	}
+	wsDir, wsCfg := mustWorkspace()
 
 	changed := false
 	i := 0
 	for i < len(args) {
-		if (args[i] == "-p" || args[i] == "--project") && i+2 < len(args) && (args[i+1] == "-u" || args[i+1] == "--use") {
+		if (args[i] == "-e" || args[i] == "--env") && i+2 < len(args) && (args[i+1] == "-u" || args[i+1] == "--use") {
 			name := args[i+2]
-			switchProject(cfg, name)
-			changed = true
-			i += 3
-		} else if (args[i] == "-e" || args[i] == "--env") && i+2 < len(args) && (args[i+1] == "-u" || args[i+1] == "--use") {
-			name := args[i+2]
-			switchEnv(cfg, name)
+			switchEnv(wsCfg, name)
 			changed = true
 			i += 3
 		} else {
@@ -202,8 +196,8 @@ func handleShorthandFlags(args []string) bool {
 		return false
 	}
 
-	if err := cfg.Save(); err != nil {
-		output.Errorf("save config: %s", err)
+	if err := workspace.SaveConfig(wsDir, wsCfg); err != nil {
+		output.Errorf("save workspace: %s", err)
 	}
 
 	// If there are remaining args after flags, they're a command — don't handle here
@@ -212,82 +206,44 @@ func handleShorthandFlags(args []string) bool {
 	}
 
 	// No command after flags — print status
-	printStatus(cfg)
+	printStatus(wsCfg)
 	return true
 }
 
-func switchProject(cfg *config.Config, name string) {
-	// Find project by name (case-insensitive)
-	var found []config.Credential
-	for _, cred := range cfg.Credentials {
-		if strings.EqualFold(cred.ProjectName, name) {
-			found = append(found, cred)
-		}
-	}
-	if len(found) == 0 {
-		// Try by ID
-		found = cfg.FindByProjectID(name)
-	}
-	if len(found) == 0 {
-		projects := cfg.Projects()
-		var names []string
-		for _, n := range projects {
-			names = append(names, n)
-		}
-		output.Errorf("project %q not found. Available: %s", name, strings.Join(names, ", "))
-	}
-
-	cfg.ActiveProject = found[0].ProjectID
-
-	// Auto-select default env for this project
-	envFound := false
-	for _, cred := range found {
-		if cred.EnvID == cfg.ActiveEnv {
-			envFound = true
-			break
-		}
-	}
-	if !envFound {
-		// Pick first available env for this project
-		cfg.ActiveEnv = found[0].EnvID
-	}
-}
-
-func switchEnv(cfg *config.Config, name string) {
-	// Find env by name within active project (case-insensitive)
-	for _, cred := range cfg.Credentials {
-		if cred.ProjectID == cfg.ActiveProject && strings.EqualFold(cred.EnvName, name) {
-			cfg.ActiveEnv = cred.EnvID
+func switchEnv(wsCfg *workspace.WorkspaceConfig, name string) {
+	// Find env by name (case-insensitive)
+	for _, cred := range wsCfg.Credentials {
+		if strings.EqualFold(cred.EnvName, name) {
+			wsCfg.ActiveEnv = cred.EnvID
 			return
 		}
 	}
 	// Try by ID
-	for _, cred := range cfg.Credentials {
-		if cred.ProjectID == cfg.ActiveProject && cred.EnvID == name {
-			cfg.ActiveEnv = cred.EnvID
+	for _, cred := range wsCfg.Credentials {
+		if cred.EnvID == name {
+			wsCfg.ActiveEnv = cred.EnvID
 			return
 		}
 	}
 
 	// List available envs
-	creds := cfg.FindByProjectID(cfg.ActiveProject)
 	var names []string
-	for _, c := range creds {
+	for _, c := range wsCfg.Credentials {
 		names = append(names, c.EnvName)
 	}
 	output.Errorf("environment %q not found. Available: %s", name, strings.Join(names, ", "))
 }
 
-func printStatus(cfg *config.Config) {
-	cred, err := cfg.ActiveCredential()
+func printStatus(wsCfg *workspace.WorkspaceConfig) {
+	cred, err := wsCfg.ActiveCredential()
 	if err != nil {
 		output.Errorf("%s", err)
 	}
 
 	if output.JSONMode {
 		output.JSON(map[string]string{
-			"project_id":   cred.ProjectID,
-			"project_name": cred.ProjectName,
+			"project_id":   wsCfg.ProjectID,
+			"project_name": wsCfg.ProjectName,
 			"env_id":       cred.EnvID,
 			"env_name":     cred.EnvName,
 			"base_url":     cred.BaseURL,
@@ -295,7 +251,7 @@ func printStatus(cfg *config.Config) {
 		return
 	}
 
-	fmt.Printf("Project:  %s (%s)\n", cred.ProjectName, cred.ProjectID)
+	fmt.Printf("Project:  %s (%s)\n", wsCfg.ProjectName, wsCfg.ProjectID)
 	fmt.Printf("Env:      %s (%s)\n", cred.EnvName, cred.EnvID)
 	url := cred.BaseURL
 	if url == "" {
@@ -339,23 +295,21 @@ func handleLogin(args []string) {
 		output.Errorf("list environments: %s", err)
 	}
 
-	// Store a credential for each environment
-	cfg, err := config.Load()
-	if err != nil {
-		output.Errorf("load config: %s", err)
-	}
+	// Store credentials in workspace config
+	wsDir, wsCfg := mustWorkspace()
+
+	wsCfg.ProjectID = proj.ID
+	wsCfg.ProjectName = proj.Name
 
 	var activeEnvID, activeEnvName string
 	for _, env := range envs {
-		cred := config.Credential{
-			APIKey:      apiKey,
-			BaseURL:     baseURL,
-			ProjectID:   proj.ID,
-			ProjectName: proj.Name,
-			EnvID:       env.ID,
-			EnvName:     env.Name,
+		cred := workspace.Credential{
+			APIKey:  apiKey,
+			BaseURL: baseURL,
+			EnvID:   env.ID,
+			EnvName: env.Name,
 		}
-		cfg.AddOrUpdate(cred)
+		wsCfg.AddOrUpdate(cred)
 
 		// Pick default env, or first
 		if env.IsDefault || activeEnvID == "" {
@@ -364,13 +318,12 @@ func handleLogin(args []string) {
 		}
 	}
 
-	cfg.ActiveProject = proj.ID
 	if activeEnvID != "" {
-		cfg.ActiveEnv = activeEnvID
+		wsCfg.ActiveEnv = activeEnvID
 	}
 
-	if err := cfg.Save(); err != nil {
-		output.Errorf("save config: %s", err)
+	if err := workspace.SaveConfig(wsDir, wsCfg); err != nil {
+		output.Errorf("save workspace: %s", err)
 	}
 
 	output.Success(fmt.Sprintf("Logged in to %s / %s", proj.Name, activeEnvName))
@@ -380,62 +333,40 @@ func handleLogin(args []string) {
 }
 
 func handleLogout(args []string) {
-	cfg, err := config.Load()
-	if err != nil {
-		output.Errorf("load config: %s", err)
-	}
+	wsDir, wsCfg := mustWorkspace()
 
-	cred, err := cfg.ActiveCredential()
+	cred, err := wsCfg.ActiveCredential()
 	if err != nil {
 		output.Errorf("%s", err)
 	}
 
 	name := cred.EnvName
-	cfg.Remove(cred.EnvID)
+	wsCfg.Remove(cred.EnvID)
 
 	// Pick new active if available
-	if len(cfg.Credentials) > 0 {
-		cfg.ActiveProject = cfg.Credentials[0].ProjectID
-		cfg.ActiveEnv = cfg.Credentials[0].EnvID
+	if len(wsCfg.Credentials) > 0 {
+		wsCfg.ActiveEnv = wsCfg.Credentials[0].EnvID
 	} else {
-		cfg.ActiveProject = ""
-		cfg.ActiveEnv = ""
+		wsCfg.ActiveEnv = ""
 	}
 
-	if err := cfg.Save(); err != nil {
-		output.Errorf("save config: %s", err)
+	if err := workspace.SaveConfig(wsDir, wsCfg); err != nil {
+		output.Errorf("save workspace: %s", err)
 	}
 
 	output.Success(fmt.Sprintf("Logged out from %s", name))
 }
 
 func handleStatus(args []string) {
-	cfg, err := config.Load()
-	if err != nil {
-		output.Errorf("load config: %s", err)
-	}
-
-	printStatus(cfg)
+	_, wsCfg := mustWorkspace()
+	printStatus(wsCfg)
 }
 
 // --- Project commands ---
 
 func handleProject(args []string) {
 	if len(args) > 0 && args[0] == "use" {
-		if len(args) < 2 {
-			output.Errorf("usage: airstrings project use <name>")
-		}
-		cfg, err := config.Load()
-		if err != nil {
-			output.Errorf("load config: %s", err)
-		}
-		switchProject(cfg, args[1])
-		if err := cfg.Save(); err != nil {
-			output.Errorf("save config: %s", err)
-		}
-		cred, _ := cfg.ActiveCredential()
-		output.Success(fmt.Sprintf("Switched to %s / %s", cred.ProjectName, cred.EnvName))
-		return
+		output.Errorf("workspace is bound to one project — init a new workspace for a different project")
 	}
 
 	c := mustClient()
@@ -466,16 +397,13 @@ func handleEnv(args []string) {
 		if len(args) < 2 {
 			output.Errorf("usage: airstrings env use <name>")
 		}
-		cfg, err := config.Load()
-		if err != nil {
-			output.Errorf("load config: %s", err)
+		wsDir, wsCfg := mustWorkspace()
+		switchEnv(wsCfg, args[1])
+		if err := workspace.SaveConfig(wsDir, wsCfg); err != nil {
+			output.Errorf("save workspace: %s", err)
 		}
-		switchEnv(cfg, args[1])
-		if err := cfg.Save(); err != nil {
-			output.Errorf("save config: %s", err)
-		}
-		cred, _ := cfg.ActiveCredential()
-		output.Success(fmt.Sprintf("Switched to %s / %s", cred.ProjectName, cred.EnvName))
+		cred, _ := wsCfg.ActiveCredential()
+		output.Success(fmt.Sprintf("Switched to %s / %s", wsCfg.ProjectName, cred.EnvName))
 		return
 	}
 
@@ -498,7 +426,7 @@ func handleEnv(args []string) {
 		output.Errorf("list environments: %s", err)
 	}
 
-	cfg, _ := config.Load()
+	_, wsCfg := mustWorkspace()
 
 	if output.JSONMode {
 		output.JSON(envs)
@@ -517,7 +445,7 @@ func handleEnv(args []string) {
 			sealed = "✓"
 		}
 		active := ""
-		if e.ID == cfg.ActiveEnv {
+		if e.ID == wsCfg.ActiveEnv {
 			active = "✓"
 		}
 		rows = append(rows, []string{e.ID, e.Name, def, sealed, active})
@@ -901,61 +829,23 @@ func handleImport(args []string) {
 // --- Workspace commands ---
 
 func handleInit(args []string) {
-	cfg, err := config.Load()
-	if err != nil {
-		output.Errorf("load config: %s", err)
-	}
-
-	cred, err := cfg.ActiveCredential()
-	if err != nil {
-		output.Errorf("%s", err)
-	}
-
-	// Validate credentials
-	c := client.New(cred.APIKey, cred.BaseURL, cred.ProjectID, cred.EnvID)
-	proj, err := c.GetProject()
-	if err != nil {
-		output.Errorf("validate credentials: %s", err)
-	}
-
 	cwd, err := os.Getwd()
 	if err != nil {
 		output.Errorf("get working directory: %s", err)
 	}
 
-	wsCfg := workspace.WorkspaceConfig{
-		ProjectID: cred.ProjectID,
-		EnvID:     cred.EnvID,
-		BaseURL:   cred.BaseURL,
+	// Check if workspace already exists
+	wsDir := filepath.Join(cwd, ".airstrings")
+	if _, err := os.Stat(filepath.Join(wsDir, "config.json")); err == nil {
+		output.Errorf("workspace already exists at %s", wsDir)
 	}
+
+	wsCfg := workspace.WorkspaceConfig{}
 	if err := workspace.Init(cwd, wsCfg); err != nil {
 		output.Errorf("init workspace: %s", err)
 	}
 
-	// Check for remote sections and create local dirs
-	wsPath := cwd + "/.airstrings"
-	sections, err := c.ListSections()
-	sectionCount := 0
-	if err == nil && len(sections.Data) > 0 {
-		for _, sec := range sections.Data {
-			workspace.CreateSectionDir(wsPath, sec.Name)
-		}
-		sectionCount = len(sections.Data)
-	}
-
-	if output.JSONMode {
-		output.JSON(map[string]any{
-			"project":     proj.Name,
-			"environment": cred.EnvName,
-			"sections":    sectionCount,
-		})
-		return
-	}
-
-	output.Success(fmt.Sprintf("Workspace initialized for %s / %s", proj.Name, cred.EnvName))
-	if sectionCount > 0 {
-		fmt.Printf("  Sections: %d initialized\n", sectionCount)
-	}
+	output.Success("Workspace initialized. Run: airstrings login <api-key>")
 }
 
 func handleLocal(args []string) {

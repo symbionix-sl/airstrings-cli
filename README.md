@@ -26,28 +26,23 @@ go build -o airstrings ./cmd/airstrings
 
 ## Setup
 
-Log in with your API key:
+Initialize a workspace in your project directory, then log in:
 
 ```bash
+cd my-project
+airstrings init
 airstrings login ask_live_xxxxxxxxxxxx
 ```
 
-This validates the key, auto-detects your project and environments, and stores credentials.
+This validates the key, auto-detects your project and environments, and stores credentials in `.airstrings/config.json`. Each project has its own workspace — no shared global config.
 
 ### Switching environments
 
 ```bash
 airstrings env                      # list environments (✓ = active)
 airstrings env use staging          # switch to staging
+airstrings -e -u staging            # shorthand
 airstrings status                   # show current project, env, and key
-```
-
-### Shorthands (chainable)
-
-```bash
-airstrings -e -u staging            # switch env
-airstrings -p -u MyProject          # switch project
-airstrings -p -u MyProject -e -u staging   # switch both
 ```
 
 ## Usage
@@ -60,8 +55,8 @@ airstrings <command> [options]
 
 ```bash
 airstrings project                  # Show project info
-airstrings project use MyProject    # Switch active project
 airstrings env                      # List environments
+airstrings env use staging          # Switch active environment
 airstrings env create staging       # Create a new environment
 airstrings locales                  # List locales with string counts
 ```
@@ -105,8 +100,9 @@ airstrings import status imp_xxxxx  # Check import progress
 The workspace workflow lets you manage strings locally and sync with the API. This is the recommended workflow for AI-assisted string management.
 
 ```bash
-# Initialize workspace in your project
+# Initialize workspace and log in
 airstrings init
+airstrings login ask_live_xxxxxxxxxxxx
 
 # Add strings locally (no API calls)
 airstrings local set onboarding.welcome en="Welcome!" it="Benvenuto!" --section onboarding
@@ -133,7 +129,7 @@ The `airstrings init` command creates a `.airstrings/` folder in your project ro
 
 ```
 .airstrings/
-  config.json              # workspace config (project ID, env ID, profile)
+  config.json              # workspace config (credentials, project, active env)
   strings.csv              # unsectioned strings
   onboarding/onboarding.csv  # section strings
   settings/settings.csv
@@ -200,24 +196,17 @@ airstrings project --json | jq '.name'
 
 ## Configuration
 
-Config is stored at `~/.airstrings/config.json`. Each credential maps an API key to a project and environment:
-
-| Field | Description |
-|---|---|
-| `api_key` | Scoped API key |
-| `base_url` | API base URL (defaults to production) |
-| `project_id` | Auto-detected from API key |
-| `project_name` | Human-readable project name |
-| `env_id` | Environment ID |
-| `env_name` | Human-readable environment name |
+Config is stored per-project in `.airstrings/config.json` (like `.git/config`). No global config — each workspace is self-contained with its own credentials and active environment.
 
 ```bash
-airstrings login <api-key> [--url <base-url>]    # add credentials
+airstrings init                                   # create workspace
+airstrings login <api-key> [--url <base-url>]     # add credentials
 airstrings logout                                 # remove current credential
 airstrings status                                 # show active context
 airstrings env use <name>                         # switch environment
-airstrings project use <name>                     # switch project
 ```
+
+The workspace is found by walking up the directory tree, so commands work from any subdirectory.
 
 ## Requirements
 

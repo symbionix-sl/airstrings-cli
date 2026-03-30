@@ -4,16 +4,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 
-	"github.com/symbionix/airstrings-cli/internal/client"
-	"github.com/symbionix/airstrings-cli/internal/config"
 	"github.com/symbionix/airstrings-cli/internal/workspace"
 )
 
 var toolDefs = []ToolDef{
 	{
 		Name:        "airstrings_init",
-		Description: "Initialize an AirStrings workspace in the current directory. Creates .airstrings/ folder with config and section directories. Uses the active project and environment.",
+		Description: "Initialize an AirStrings workspace in the current directory. Creates .airstrings/ folder. You must run airstrings login afterwards to authenticate.",
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]Property{
@@ -93,7 +92,7 @@ var toolDefs = []ToolDef{
 type toolHandler func(args json.RawMessage) *CallToolResult
 
 var toolHandlers = map[string]toolHandler{
-	"airstrings_init":     handleToolInit,
+	"airstrings_init":      handleToolInit,
 	"airstrings_local_set": handleToolLocalSet,
 	"airstrings_local_rm":  handleToolLocalRm,
 	"airstrings_local_ls":  handleToolLocalLs,
@@ -108,51 +107,25 @@ func handleToolInit(raw json.RawMessage) *CallToolResult {
 	}
 	json.Unmarshal(raw, &args)
 
-	cfg, err := config.Load()
-	if err != nil {
-		return errorResult(fmt.Sprintf("load config: %s", err))
-	}
-
-	cred, err := cfg.ActiveCredential()
-	if err != nil {
-		return errorResult(fmt.Sprintf("not logged in — run: airstrings login <api-key>"))
-	}
-
 	dir := args.Dir
 	if dir == "" {
 		dir, _ = os.Getwd()
 	}
 
-	c := client.New(cred.APIKey, cred.BaseURL, cred.ProjectID, cred.EnvID)
-	proj, err := c.GetProject()
-	if err != nil {
-		return errorResult(fmt.Sprintf("validate credentials: %s", err))
+	// Check if workspace already exists
+	wsDir := filepath.Join(dir, ".airstrings")
+	if _, err := os.Stat(filepath.Join(wsDir, "config.json")); err == nil {
+		return errorResult(fmt.Sprintf("workspace already exists at %s", wsDir))
 	}
 
-	wsCfg := workspace.WorkspaceConfig{
-		ProjectID: cred.ProjectID,
-		EnvID:     cred.EnvID,
-		BaseURL:   cred.BaseURL,
-	}
+	wsCfg := workspace.WorkspaceConfig{}
 	if err := workspace.Init(dir, wsCfg); err != nil {
 		return errorResult(fmt.Sprintf("init workspace: %s", err))
 	}
 
-	// Create section dirs for remote sections
-	wsPath := dir + "/.airstrings"
-	sections, err := c.ListSections()
-	sectionCount := 0
-	if err == nil {
-		for _, sec := range sections.Data {
-			workspace.CreateSectionDir(wsPath, sec.Name)
-		}
-		sectionCount = len(sections.Data)
-	}
-
 	result, _ := json.Marshal(map[string]any{
-		"project":     proj.Name,
-		"environment": cred.EnvName,
-		"sections":    sectionCount,
+		"workspace": wsDir,
+		"message":   "Workspace initialized. Run: airstrings login <api-key>",
 	})
 	return textResult(string(result))
 }
