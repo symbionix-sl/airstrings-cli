@@ -542,19 +542,32 @@ func handleStringList(c *client.Client, args []string) {
 		}
 	}
 
-	list, err := c.ListStrings(opts)
-	if err != nil {
-		output.Errorf("list strings: %s", err)
+	var entries []client.StringEntry
+	var hasMore bool
+
+	if opts.Limit > 0 {
+		list, err := c.ListStrings(opts)
+		if err != nil {
+			output.Errorf("list strings: %s", err)
+		}
+		entries = list.Data
+		hasMore = list.Pagination.HasMore
+	} else {
+		all, err := c.ListAllStrings(opts)
+		if err != nil {
+			output.Errorf("list strings: %s", err)
+		}
+		entries = all
 	}
 
 	if output.JSONMode {
-		output.JSON(list)
+		output.JSON(entries)
 		return
 	}
 
 	headers := []string{"KEY", "FORMAT", "LOCALES", "SECTION"}
 	var rows [][]string
-	for _, s := range list.Data {
+	for _, s := range entries {
 		locales := make([]string, 0, len(s.Values))
 		for loc := range s.Values {
 			locales = append(locales, loc)
@@ -567,8 +580,8 @@ func handleStringList(c *client.Client, args []string) {
 	}
 	output.Table(headers, rows)
 
-	if list.Pagination.HasMore {
-		fmt.Printf("\n(more results available — use --limit or pagination)\n")
+	if hasMore {
+		fmt.Printf("\n(more results available)\n")
 	}
 }
 
