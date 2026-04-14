@@ -116,7 +116,7 @@ func TestPush_FlatStrings(t *testing.T) {
 	SetRows(CSVPath(wsDir, ""), "greeting", map[string]string{"en": "Hello", "it": "Ciao"}, "text")
 	SetRows(CSVPath(wsDir, ""), "farewell", map[string]string{"en": "Bye"}, "text")
 
-	result, err := Push(c, wsDir, "")
+	result, err := Push(c, wsDir, "", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -149,7 +149,7 @@ func TestPush_WithSections(t *testing.T) {
 	SetRows(CSVPath(wsDir, "home"), "welcome", map[string]string{"en": "Welcome"}, "text")
 	SetRows(CSVPath(wsDir, "login"), "email", map[string]string{"en": "Email"}, "text")
 
-	result, err := Push(c, wsDir, "")
+	result, err := Push(c, wsDir, "", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -178,7 +178,7 @@ func TestPush_SingleSection(t *testing.T) {
 	SetRows(CSVPath(wsDir, "login"), "email", map[string]string{"en": "Email"}, "text")
 
 	// Push only "home" section
-	result, err := Push(c, wsDir, "home")
+	result, err := Push(c, wsDir, "home", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -205,7 +205,7 @@ func TestPush_EmptyWorkspace(t *testing.T) {
 	wsDir := filepath.Join(dir, ".airstrings")
 	os.MkdirAll(wsDir, 0700)
 
-	result, err := Push(c, wsDir, "")
+	result, err := Push(c, wsDir, "", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -229,7 +229,7 @@ func TestPush_ExistingSectionReuse(t *testing.T) {
 	wsDir := filepath.Join(dir, ".airstrings")
 	SetRows(CSVPath(wsDir, "home"), "welcome", map[string]string{"en": "Welcome"}, "text")
 
-	_, err := Push(c, wsDir, "")
+	_, err := Push(c, wsDir, "", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

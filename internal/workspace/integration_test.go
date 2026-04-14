@@ -204,7 +204,7 @@ func TestIntegration_InitPushPullCycle(t *testing.T) {
 	}
 
 	// Step 3: Push to API
-	pushResult, err := workspace.Push(c, wsDir, "")
+	pushResult, err := workspace.Push(c, wsDir, "", nil)
 	if err != nil {
 		t.Fatalf("push: %v", err)
 	}
@@ -312,7 +312,7 @@ func TestIntegration_SectionWorkflow(t *testing.T) {
 	}, "text")
 
 	// Push all
-	result, err := workspace.Push(c, wsDir, "")
+	result, err := workspace.Push(c, wsDir, "", nil)
 	if err != nil {
 		t.Fatalf("push: %v", err)
 	}
@@ -393,7 +393,7 @@ func TestIntegration_PushSingleSection(t *testing.T) {
 	workspace.SetRows(workspace.CSVPath(wsDir, "login"), "login.title", map[string]string{"en": "Login"}, "text")
 
 	// Push only home
-	result, err := workspace.Push(c, wsDir, "home")
+	result, err := workspace.Push(c, wsDir, "home", nil)
 	if err != nil {
 		t.Fatalf("push: %v", err)
 	}
@@ -512,7 +512,7 @@ func TestIntegration_UpdateAndRepush(t *testing.T) {
 
 	// First push
 	workspace.SetRows(workspace.CSVPath(wsDir, ""), "title", map[string]string{"en": "Version 1"}, "text")
-	workspace.Push(c, wsDir, "")
+	workspace.Push(c, wsDir, "", nil)
 
 	if api.strings["title"].Values["en"] != "Version 1" {
 		t.Fatalf("expected 'Version 1' on server")
@@ -520,7 +520,7 @@ func TestIntegration_UpdateAndRepush(t *testing.T) {
 
 	// Update locally and push again
 	workspace.SetRows(workspace.CSVPath(wsDir, ""), "title", map[string]string{"en": "Version 2"}, "text")
-	result, err := workspace.Push(c, wsDir, "")
+	result, err := workspace.Push(c, wsDir, "", nil)
 	if err != nil {
 		t.Fatalf("re-push: %v", err)
 	}
@@ -554,7 +554,7 @@ func TestIntegration_MixedSectionsAndFlat(t *testing.T) {
 	// Section strings
 	workspace.SetRows(workspace.CSVPath(wsDir, "onboarding"), "onboarding.step1", map[string]string{"en": "Welcome!"}, "text")
 
-	result, err := workspace.Push(c, wsDir, "")
+	result, err := workspace.Push(c, wsDir, "", nil)
 	if err != nil {
 		t.Fatalf("push: %v", err)
 	}
@@ -683,7 +683,7 @@ func TestIntegration_CSVSpecialCharacters(t *testing.T) {
 	}
 
 	// Push and verify server received correct values
-	workspace.Push(c, wsDir, "")
+	workspace.Push(c, wsDir, "", nil)
 	if api.strings["comma"].Values["en"] != "Hello, world, how are you?" {
 		t.Errorf("server comma value: %q", api.strings["comma"].Values["en"])
 	}

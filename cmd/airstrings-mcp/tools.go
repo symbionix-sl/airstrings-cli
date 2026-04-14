@@ -334,7 +334,7 @@ func handleToolPush(raw json.RawMessage) *CallToolResult {
 		return errorResult(err.Error())
 	}
 
-	result, err := workspace.Push(c, wsDir, args.Section)
+	result, err := workspace.Push(c, wsDir, args.Section, nil)
 	if err != nil {
 		return errorResult(fmt.Sprintf("push: %s", err))
 	}

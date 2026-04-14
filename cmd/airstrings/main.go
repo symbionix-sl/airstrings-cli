@@ -1188,9 +1188,23 @@ func handlePush(args []string) {
 		output.Errorf("%s", err)
 	}
 
-	result, err := workspace.Push(c, wsDir, section)
+	var progress workspace.ProgressFunc
+	if !output.JSONMode {
+		progress = func(done, total int) {
+			fmt.Fprintf(os.Stderr, "\r  Pushing %d/%d strings...", done, total)
+		}
+	}
+
+	result, err := workspace.Push(c, wsDir, section, progress)
 	if err != nil {
+		if progress != nil {
+			fmt.Fprint(os.Stderr, "\r\033[K") // clear progress line
+		}
 		output.Errorf("push: %s", err)
+	}
+
+	if progress != nil {
+		fmt.Fprint(os.Stderr, "\r\033[K") // clear progress line
 	}
 
 	if output.JSONMode {

@@ -3,6 +3,7 @@ package workspace
 import (
 	"fmt"
 	"sort"
+	"sync"
 
 	"github.com/symbionix/airstrings-cli/internal/client"
 )
@@ -31,7 +32,10 @@ type PullResult struct {
 // Push reads local CSVs and upserts each key to the API.
 // If section is non-empty, only that section is pushed.
 // Sections are created remotely if they don't exist.
-func Push(c *client.Client, wsDir, section string) (*PushResult, error) {
+// ProgressFunc is called during push with (completed, total) counts.
+type ProgressFunc func(done, total int)
+
+func Push(c *client.Client, wsDir, section string, onProgress ProgressFunc) (*PushResult, error) {
 	// Determine which CSVs to push
 	var csvMap map[string]string
 	if section != "" {
@@ -50,6 +54,15 @@ func Push(c *client.Client, wsDir, section string) (*PushResult, error) {
 	// Cache section name → ID lookups
 	sectionIDs := make(map[string]string)
 
+	// Pre-scan to count total keys for progress reporting
+	type sectionData struct {
+		name    string
+		grouped map[string][]Row
+		secID   *string
+	}
+	var sections []sectionData
+	totalKeys := 0
+
 	for secName, csvPath := range csvMap {
 		rows, err := ReadCSV(csvPath)
 		if err != nil {
@@ -59,7 +72,6 @@ func Push(c *client.Client, wsDir, section string) (*PushResult, error) {
 			continue
 		}
 
-		// Resolve section ID if this is a section CSV
 		var sectionID *string
 		if secName != "" {
 			id, ok := sectionIDs[secName]
@@ -74,48 +86,81 @@ func Push(c *client.Client, wsDir, section string) (*PushResult, error) {
 			result.Sections = append(result.Sections, secName)
 		}
 
-		// Group rows by key
 		grouped := groupByKey(rows)
+		totalKeys += len(grouped)
+		sections = append(sections, sectionData{name: secName, grouped: grouped, secID: sectionID})
+	}
 
-		// Upsert each key
-		for _, key := range sortedKeys(grouped) {
-			keyRows := grouped[key]
-			format := keyRows[0].Format
-
-			values := make(map[string]*string, len(keyRows))
-			for _, row := range keyRows {
-				v := row.Value
-				values[row.Locale] = &v
-			}
-
-			req := client.UpsertStringRequest{
-				Format: format,
-				Values: values,
-			}
-
-			_, err := c.UpsertString(key, req)
-			if err != nil {
-				result.Errors++
-				result.FailedKeys = append(result.FailedKeys, PushError{
-					Key:     key,
-					Message: err.Error(),
-				})
-				continue
-			}
-
-			// Assign section if needed
-			if sectionID != nil {
-				if err := c.AssignSection(key, client.AssignSectionRequest{SectionID: sectionID}); err != nil {
-					result.FailedKeys = append(result.FailedKeys, PushError{
-						Key:     key,
-						Message: fmt.Sprintf("assign section: %s", err),
-					})
-				}
-			}
-
-			result.Upserted++
+	// Build work items
+	type workItem struct {
+		key   string
+		rows  []Row
+		secID *string
+	}
+	var items []workItem
+	for _, sec := range sections {
+		for _, key := range sortedKeys(sec.grouped) {
+			items = append(items, workItem{key: key, rows: sec.grouped[key], secID: sec.secID})
 		}
 	}
+
+	// Upsert concurrently with worker pool
+	const workers = 8
+	var mu sync.Mutex
+	done := 0
+	ch := make(chan workItem, len(items))
+	for _, item := range items {
+		ch <- item
+	}
+	close(ch)
+
+	var wg sync.WaitGroup
+	for range min(workers, len(items)) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for item := range ch {
+				format := item.rows[0].Format
+				values := make(map[string]*string, len(item.rows))
+				for _, row := range item.rows {
+					v := row.Value
+					values[row.Locale] = &v
+				}
+
+				req := client.UpsertStringRequest{
+					Format: format,
+					Values: values,
+				}
+
+				_, err := c.UpsertString(item.key, req)
+
+				mu.Lock()
+				if err != nil {
+					result.Errors++
+					result.FailedKeys = append(result.FailedKeys, PushError{
+						Key:     item.key,
+						Message: err.Error(),
+					})
+				} else {
+					if item.secID != nil {
+						if serr := c.AssignSection(item.key, client.AssignSectionRequest{SectionID: item.secID}); serr != nil {
+							result.FailedKeys = append(result.FailedKeys, PushError{
+								Key:     item.key,
+								Message: fmt.Sprintf("assign section: %s", serr),
+							})
+						}
+					}
+					result.Upserted++
+				}
+				done++
+				if onProgress != nil {
+					onProgress(done, totalKeys)
+				}
+				mu.Unlock()
+			}
+		}()
+	}
+	wg.Wait()
 
 	sort.Strings(result.Sections)
 	return result, nil
