@@ -97,6 +97,7 @@ Usage: airstrings <command> [options]
 
 Setup:
   init <api-key> [--url <base-url>]     Initialize workspace and authenticate
+                  [--purge]             Re-init and remove local strings
   status                                Show active project, environment, and key
 
 Navigation:
@@ -873,20 +874,41 @@ func handleImport(args []string) {
 
 func handleInit(args []string) {
 	if len(args) < 1 {
-		output.Errorf("usage: airstrings init <api-key> [--url <base-url>]")
+		output.Errorf("usage: airstrings init <api-key> [--url <base-url>] [--purge]")
 	}
 
-	apiKey, baseURL := parseKeyAndURL(args)
+	// Parse --purge flag before passing to parseKeyAndURL
+	var purge bool
+	var filteredArgs []string
+	for _, arg := range args {
+		if arg == "--purge" {
+			purge = true
+		} else {
+			filteredArgs = append(filteredArgs, arg)
+		}
+	}
+
+	apiKey, baseURL := parseKeyAndURL(filteredArgs)
 
 	cwd, err := os.Getwd()
 	if err != nil {
 		output.Errorf("get working directory: %s", err)
 	}
 
-	// Check if workspace already exists
+	// Handle existing workspace
 	wsDir := filepath.Join(cwd, ".airstrings")
 	if _, err := os.Stat(filepath.Join(wsDir, "config.json")); err == nil {
-		output.Errorf("workspace already exists at %s", wsDir)
+		if purge {
+			// Remove everything and start fresh
+			if err := os.RemoveAll(wsDir); err != nil {
+				output.Errorf("remove workspace: %s", err)
+			}
+		} else {
+			// Keep CSVs: remove only config, re-init will recreate it
+			if err := os.Remove(filepath.Join(wsDir, "config.json")); err != nil {
+				output.Errorf("remove old config: %s", err)
+			}
+		}
 	}
 
 	// Validate key and discover project/environments
