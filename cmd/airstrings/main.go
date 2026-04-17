@@ -836,10 +836,7 @@ func handleImport(args []string) {
 		if err != nil {
 			output.Errorf("read file: %s", err)
 		}
-		status, err := c.CreateImport(client.CreateImportRequest{
-			Format: "csv",
-			Data:   string(data),
-		})
+		status, err := c.CreateImport(data, nil)
 		if err != nil {
 			output.Errorf("import: %s", err)
 		}
@@ -862,8 +859,8 @@ func handleImport(args []string) {
 			return
 		}
 		fmt.Printf("Import %s: %s\n", status.ID, status.Status)
-		fmt.Printf("  Imported: %d  Skipped: %d  Errors: %d\n",
-			status.ImportedCount, status.SkippedCount, status.ErrorCount)
+		fmt.Printf("  Created: %d  Updated: %d  Skipped: %d  Errors: %d\n",
+			status.CreatedRows, status.UpdatedRows, status.SkippedRows, len(status.Errors))
 
 	default:
 		output.Errorf("unknown import command: %s", args[0])
@@ -1190,8 +1187,13 @@ func handlePush(args []string) {
 
 	var progress workspace.ProgressFunc
 	if !output.JSONMode {
-		progress = func(done, total int) {
-			fmt.Fprintf(os.Stderr, "\r  Pushing %d/%d strings...", done, total)
+		progress = func(phase string, done, total int) {
+			switch phase {
+			case "uploading":
+				fmt.Fprintf(os.Stderr, "\r  Uploading strings...")
+			case "processing":
+				fmt.Fprintf(os.Stderr, "\r  Processing %d/%d rows...", done, total)
+			}
 		}
 	}
 

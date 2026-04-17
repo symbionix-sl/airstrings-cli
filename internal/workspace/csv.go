@@ -1,6 +1,7 @@
 package workspace
 
 import (
+	"bytes"
 	"encoding/csv"
 	"errors"
 	"io"
@@ -185,6 +186,42 @@ func SetRows(path, key string, values map[string]string, format string) error {
 	}
 
 	return WriteCSV(path, existing)
+}
+
+// WriteCSVToBuffer writes rows to an in-memory buffer.
+// If includeSection is true, adds a 5th "section" column with sectionName for each row.
+func WriteCSVToBuffer(rows []Row, includeSection bool, sectionName string) (*bytes.Buffer, error) {
+	var buf bytes.Buffer
+	w := csv.NewWriter(&buf)
+
+	header := []string{"key", "locale", "value", "format"}
+	if includeSection {
+		header = append(header, "section")
+	}
+	if err := w.Write(header); err != nil {
+		return nil, err
+	}
+
+	for _, row := range rows {
+		format := row.Format
+		if format == "" {
+			format = "text"
+		}
+		record := []string{row.Key, row.Locale, row.Value, format}
+		if includeSection {
+			record = append(record, sectionName)
+		}
+		if err := w.Write(record); err != nil {
+			return nil, err
+		}
+	}
+
+	w.Flush()
+	if err := w.Error(); err != nil {
+		return nil, err
+	}
+
+	return &buf, nil
 }
 
 // RemoveRows removes rows from a CSV file.

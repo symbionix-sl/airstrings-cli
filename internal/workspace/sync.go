@@ -1,14 +1,16 @@
 package workspace
 
 import (
+	"bytes"
+	"compress/gzip"
+	"encoding/csv"
 	"fmt"
 	"sort"
-	"sync"
 
 	"github.com/symbionix/airstrings-cli/internal/client"
 )
 
-// PushError records a single key that failed to upsert.
+// PushError records a single key that failed to import.
 type PushError struct {
 	Key     string `json:"key"`
 	Message string `json:"message"`
@@ -16,10 +18,10 @@ type PushError struct {
 
 // PushResult summarizes the outcome of a push operation.
 type PushResult struct {
-	Upserted    int         `json:"upserted"`
-	Errors      int         `json:"errors"`
-	Sections    []string    `json:"sections"`
-	FailedKeys  []PushError `json:"failed_keys,omitempty"`
+	Upserted   int         `json:"upserted"`
+	Errors     int         `json:"errors"`
+	Sections   []string    `json:"sections"`
+	FailedKeys []PushError `json:"failed_keys,omitempty"`
 }
 
 // PullResult summarizes the outcome of a pull operation.
@@ -29,12 +31,13 @@ type PullResult struct {
 	FileCount   int
 }
 
-// Push reads local CSVs and upserts each key to the API.
-// If section is non-empty, only that section is pushed.
-// Sections are created remotely if they don't exist.
-// ProgressFunc is called during push with (completed, total) counts.
-type ProgressFunc func(done, total int)
+// ProgressFunc is called during push with the current phase and progress.
+// Phase is "uploading" or "processing".
+type ProgressFunc func(phase string, done, total int)
 
+// Push reads local CSVs, builds a single CSV with a section column,
+// gzips it, and uploads via the import endpoint.
+// If section is non-empty, only that section is pushed.
 func Push(c *client.Client, wsDir, section string, onProgress ProgressFunc) (*PushResult, error) {
 	// Determine which CSVs to push
 	var csvMap map[string]string
@@ -51,18 +54,16 @@ func Push(c *client.Client, wsDir, section string, onProgress ProgressFunc) (*Pu
 
 	result := &PushResult{}
 
-	// Cache section name → ID lookups
-	sectionIDs := make(map[string]string)
+	// Build a single CSV buffer with section column from all CSVs
+	var allBuf bytes.Buffer
+	w := csv.NewWriter(&allBuf)
 
-	// Pre-scan to count total keys for progress reporting
-	type sectionData struct {
-		name    string
-		grouped map[string][]Row
-		secID   *string
+	// Write header
+	if err := w.Write([]string{"key", "locale", "value", "format", "section"}); err != nil {
+		return nil, fmt.Errorf("write csv header: %w", err)
 	}
-	var sections []sectionData
-	totalKeys := 0
 
+	totalRows := 0
 	for secName, csvPath := range csvMap {
 		rows, err := ReadCSV(csvPath)
 		if err != nil {
@@ -72,95 +73,90 @@ func Push(c *client.Client, wsDir, section string, onProgress ProgressFunc) (*Pu
 			continue
 		}
 
-		var sectionID *string
 		if secName != "" {
-			id, ok := sectionIDs[secName]
-			if !ok {
-				id, err = EnsureSection(c, secName)
-				if err != nil {
-					return nil, fmt.Errorf("ensure section %q: %w", secName, err)
-				}
-				sectionIDs[secName] = id
-			}
-			sectionID = &id
 			result.Sections = append(result.Sections, secName)
 		}
 
-		grouped := groupByKey(rows)
-		totalKeys += len(grouped)
-		sections = append(sections, sectionData{name: secName, grouped: grouped, secID: sectionID})
-	}
-
-	// Build work items
-	type workItem struct {
-		key   string
-		rows  []Row
-		secID *string
-	}
-	var items []workItem
-	for _, sec := range sections {
-		for _, key := range sortedKeys(sec.grouped) {
-			items = append(items, workItem{key: key, rows: sec.grouped[key], secID: sec.secID})
+		for _, row := range rows {
+			format := row.Format
+			if format == "" {
+				format = "text"
+			}
+			if err := w.Write([]string{row.Key, row.Locale, row.Value, format, secName}); err != nil {
+				return nil, fmt.Errorf("write csv row: %w", err)
+			}
+			totalRows++
 		}
 	}
 
-	// Upsert concurrently with worker pool
-	const workers = 8
-	var mu sync.Mutex
-	done := 0
-	ch := make(chan workItem, len(items))
-	for _, item := range items {
-		ch <- item
+	w.Flush()
+	if err := w.Error(); err != nil {
+		return nil, fmt.Errorf("flush csv: %w", err)
 	}
-	close(ch)
 
-	var wg sync.WaitGroup
-	for range min(workers, len(items)) {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for item := range ch {
-				format := item.rows[0].Format
-				values := make(map[string]*string, len(item.rows))
-				for _, row := range item.rows {
-					v := row.Value
-					values[row.Locale] = &v
-				}
+	if totalRows == 0 {
+		sort.Strings(result.Sections)
+		return result, nil
+	}
 
-				req := client.UpsertStringRequest{
-					Format: format,
-					Values: values,
-				}
+	// Gzip the CSV
+	var compressed bytes.Buffer
+	gz := gzip.NewWriter(&compressed)
+	if _, err := gz.Write(allBuf.Bytes()); err != nil {
+		return nil, fmt.Errorf("gzip write: %w", err)
+	}
+	if err := gz.Close(); err != nil {
+		return nil, fmt.Errorf("gzip close: %w", err)
+	}
 
-				_, err := c.UpsertString(item.key, req)
+	// Upload
+	if onProgress != nil {
+		onProgress("uploading", 0, 1)
+	}
 
-				mu.Lock()
-				if err != nil {
-					result.Errors++
-					result.FailedKeys = append(result.FailedKeys, PushError{
-						Key:     item.key,
-						Message: err.Error(),
-					})
-				} else {
-					if item.secID != nil {
-						if serr := c.AssignSection(item.key, client.AssignSectionRequest{SectionID: item.secID}); serr != nil {
-							result.FailedKeys = append(result.FailedKeys, PushError{
-								Key:     item.key,
-								Message: fmt.Sprintf("assign section: %s", serr),
-							})
-						}
-					}
-					result.Upserted++
-				}
-				done++
-				if onProgress != nil {
-					onProgress(done, totalKeys)
-				}
-				mu.Unlock()
+	status, err := c.CreateImport(compressed.Bytes(), nil)
+	if err != nil {
+		return nil, fmt.Errorf("create import: %w", err)
+	}
+
+	if onProgress != nil {
+		onProgress("uploading", 1, 1)
+	}
+
+	// Poll until complete
+	var pollCallback func(*client.ImportStatus)
+	if onProgress != nil {
+		pollCallback = func(s *client.ImportStatus) {
+			onProgress("processing", s.ProcessedRows, s.TotalRows)
+		}
+	}
+
+	final, err := c.WaitForImport(status.ID, pollCallback)
+	if err != nil {
+		// Even on failure, try to populate result from whatever we have
+		if final != nil {
+			result.Upserted = final.CreatedRows + final.UpdatedRows
+			result.Errors = len(final.Errors)
+			for _, ie := range final.Errors {
+				result.FailedKeys = append(result.FailedKeys, PushError{
+					Key:     ie.Key,
+					Message: ie.Reason,
+				})
 			}
-		}()
+		}
+		sort.Strings(result.Sections)
+		return result, fmt.Errorf("wait for import: %w", err)
 	}
-	wg.Wait()
+
+	// Build result from final status
+	result.Upserted = final.CreatedRows + final.UpdatedRows
+	result.Errors = len(final.Errors)
+	for _, ie := range final.Errors {
+		result.FailedKeys = append(result.FailedKeys, PushError{
+			Key:     ie.Key,
+			Message: ie.Reason,
+		})
+	}
 
 	sort.Strings(result.Sections)
 	return result, nil
@@ -274,23 +270,4 @@ func EnsureSection(c *client.Client, name string) (string, error) {
 		return "", fmt.Errorf("create section %q: %w", name, err)
 	}
 	return sec.ID, nil
-}
-
-// groupByKey groups rows by their Key field.
-func groupByKey(rows []Row) map[string][]Row {
-	m := make(map[string][]Row)
-	for _, r := range rows {
-		m[r.Key] = append(m[r.Key], r)
-	}
-	return m
-}
-
-// sortedKeys returns the keys of a map in sorted order.
-func sortedKeys(m map[string][]Row) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	return keys
 }

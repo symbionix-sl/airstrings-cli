@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"net/url"
 	"strings"
@@ -100,6 +101,86 @@ func (c *Client) do(method, path string, query url.Values, body any, result any)
 	req.Header.Set("Accept", "application/json")
 
 	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("read response: %w", err)
+	}
+
+	ct := resp.Header.Get("Content-Type")
+	looksLikeJSON := len(respBody) > 0 && (respBody[0] == '{' || respBody[0] == '[')
+	isJSON := strings.Contains(ct, "json") || (ct == "" && looksLikeJSON)
+
+	if resp.StatusCode >= 400 {
+		var apiErr APIError
+		apiErr.StatusCode = resp.StatusCode
+		if isJSON || looksLikeJSON {
+			_ = json.Unmarshal(respBody, &apiErr.Body)
+		}
+		if apiErr.Body.Error.Message == "" && !isJSON && !looksLikeJSON {
+			apiErr.Body.Error.Message = fmt.Sprintf("unexpected response from %s (got %s, expected JSON) — check your --url value", c.baseURL, ct)
+		}
+		return &apiErr
+	}
+
+	if result != nil && len(respBody) > 0 {
+		if err := json.Unmarshal(respBody, result); err != nil {
+			if !isJSON && !looksLikeJSON {
+				return fmt.Errorf("unexpected response from %s (got %s, expected JSON) — check your --url value", c.baseURL, ct)
+			}
+			return fmt.Errorf("decode response: %w", err)
+		}
+	}
+
+	return nil
+}
+
+// doMultipart sends a multipart/form-data POST request with a file and optional fields.
+func (c *Client) doMultipart(path string, fields map[string]string, fileName string, fileData []byte, result any) error {
+	var body bytes.Buffer
+	w := multipart.NewWriter(&body)
+
+	// Write form fields
+	for k, v := range fields {
+		if err := w.WriteField(k, v); err != nil {
+			return fmt.Errorf("write field %s: %w", k, err)
+		}
+	}
+
+	// Write file part
+	part, err := w.CreateFormFile("file", fileName)
+	if err != nil {
+		return fmt.Errorf("create form file: %w", err)
+	}
+	if _, err := part.Write(fileData); err != nil {
+		return fmt.Errorf("write file data: %w", err)
+	}
+
+	if err := w.Close(); err != nil {
+		return fmt.Errorf("close multipart writer: %w", err)
+	}
+
+	u := c.baseURL + path
+
+	req, err := http.NewRequest("POST", u, &body)
+	if err != nil {
+		return fmt.Errorf("create request: %w", err)
+	}
+
+	req.Header.Set("X-API-Key", c.apiKey)
+	req.Header.Set("Content-Type", w.FormDataContentType())
+	req.Header.Set("Accept", "application/json")
+
+	// Use a longer timeout for multipart uploads
+	uploadClient := &http.Client{
+		Timeout: 5 * time.Minute,
+	}
+
+	resp, err := uploadClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("request failed: %w", err)
 	}

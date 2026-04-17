@@ -1,7 +1,11 @@
 package workspace_test
 
 import (
+	"bytes"
+	"compress/gzip"
+	"encoding/csv"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -17,11 +21,13 @@ import (
 // fullAPI is a more complete test API server that tracks state across
 // operations, simulating the real AirStrings backend for integration tests.
 type fullAPI struct {
-	mu       sync.Mutex
-	project  client.Project
-	sections []client.Section
-	strings  map[string]*client.StringEntry // key → entry
-	mux      *http.ServeMux
+	mu           sync.Mutex
+	project      client.Project
+	sections     []client.Section
+	strings      map[string]*client.StringEntry // key → entry
+	lastImportID string
+	lastImport   *client.ImportStatus
+	mux          *http.ServeMux
 }
 
 func newFullAPI() *fullAPI {
@@ -39,6 +45,8 @@ func newFullAPI() *fullAPI {
 	api.mux.HandleFunc("/v1/projects/proj-int/environments/env-int/sections", api.handleSections)
 	api.mux.HandleFunc("/v1/projects/proj-int/environments/env-int/strings/", api.handleStringByKey)
 	api.mux.HandleFunc("/v1/projects/proj-int/environments/env-int/strings", api.handleStrings)
+	api.mux.HandleFunc("/v1/projects/proj-int/environments/env-int/imports", api.handleImportCreate)
+	api.mux.HandleFunc("/v1/projects/proj-int/environments/env-int/imports/", api.handleImportGet)
 	api.mux.HandleFunc("/v1/projects/proj-int/environments/env-int/bundles/publish", api.handlePublish)
 	return api
 }
@@ -143,6 +151,122 @@ func (a *fullAPI) handleStringByKey(w http.ResponseWriter, r *http.Request) {
 		}
 
 		json.NewEncoder(w).Encode(entry)
+	}
+}
+
+func (a *fullAPI) handleImportCreate(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	if err := r.ParseMultipartForm(50 << 20); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+
+	file, _, err := r.FormFile("file")
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	defer file.Close()
+
+	data, _ := io.ReadAll(file)
+
+	// Auto-detect gzip
+	var reader io.Reader
+	if len(data) >= 2 && data[0] == 0x1f && data[1] == 0x8b {
+		gr, _ := gzip.NewReader(bytes.NewReader(data))
+		defer gr.Close()
+		decompressed, _ := io.ReadAll(gr)
+		reader = bytes.NewReader(decompressed)
+	} else {
+		reader = bytes.NewReader(data)
+	}
+
+	csvReader := csv.NewReader(reader)
+	records, _ := csvReader.ReadAll()
+
+	created := 0
+	updated := 0
+	seenKeys := make(map[string]bool)
+	if len(records) > 1 {
+		for _, rec := range records[1:] { // skip header
+			key := rec[0]
+			locale := rec[1]
+			value := rec[2]
+			format := "text"
+			if len(rec) > 3 && rec[3] != "" {
+				format = rec[3]
+			}
+			section := ""
+			if len(rec) > 4 {
+				section = rec[4]
+			}
+
+			entry, exists := a.strings[key]
+			if !exists {
+				entry = &client.StringEntry{
+					Key:    key,
+					Format: format,
+					Values: make(map[string]string),
+				}
+				a.strings[key] = entry
+				if !seenKeys[key] {
+					created++
+				}
+			} else if !seenKeys[key] {
+				updated++
+			}
+			seenKeys[key] = true
+
+			entry.Format = format
+			entry.Values[locale] = value
+
+			// Assign section if specified
+			if section != "" {
+				secID := ""
+				for _, s := range a.sections {
+					if s.Name == section {
+						secID = s.ID
+						break
+					}
+				}
+				if secID == "" {
+					secID = "sec-" + section
+					a.sections = append(a.sections, client.Section{ID: secID, Name: section})
+				}
+				entry.SectionID = &secID
+			}
+		}
+	}
+
+	resp := client.ImportStatus{
+		ID:          "imp_test_int",
+		Status:      "completed",
+		TotalRows:   created + updated,
+		CreatedRows: created,
+		UpdatedRows: updated,
+	}
+	a.lastImportID = resp.ID
+	a.lastImport = &resp
+
+	w.WriteHeader(http.StatusAccepted)
+	json.NewEncoder(w).Encode(resp)
+}
+
+func (a *fullAPI) handleImportGet(w http.ResponseWriter, r *http.Request) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	if a.lastImport != nil {
+		json.NewEncoder(w).Encode(a.lastImport)
+	} else {
+		w.WriteHeader(http.StatusNotFound)
 	}
 }
 
