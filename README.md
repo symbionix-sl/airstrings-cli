@@ -215,4 +215,4 @@ The workspace is found by walking up the directory tree, so commands work from a
 
 ## License
 
-Proprietary. Copyright Symbionix SL.
+MIT — see [LICENSE](LICENSE).
