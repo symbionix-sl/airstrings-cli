@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/symbionix/airstrings-cli/internal/client"
+	"github.com/symbionix-sl/airstrings-cli/internal/client"
 )
 
 // PushError records a single key that failed to import.

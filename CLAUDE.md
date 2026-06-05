@@ -39,7 +39,7 @@ All command handlers live in `main.go`. No command framework — plain `switch` 
 
 ### Go Style
 
-- **Go 1.26.1**, module path `github.com/symbionix/airstrings-cli`
+- **Go 1.26.1**, module path `github.com/symbionix-sl/airstrings-cli`
 - **Zero external dependencies.** stdlib only. Do not add third-party packages
 - **No interfaces unless you need two implementations.** Concrete types everywhere
 - **Errors exit immediately** via `output.Errorf()` which prints to stderr and calls `os.Exit(1)`

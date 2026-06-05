@@ -13,7 +13,7 @@ brew install symbionix-sl/airstrings/airstrings
 ### From source
 
 ```bash
-go install github.com/symbionix/airstrings-cli/cmd/airstrings@latest
+go install github.com/symbionix-sl/airstrings-cli/cmd/airstrings@latest
 ```
 
 ### Build locally

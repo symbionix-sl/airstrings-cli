@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/symbionix/airstrings-cli/internal/client"
+	"github.com/symbionix-sl/airstrings-cli/internal/client"
 )
 
 const (

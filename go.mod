@@ -1,3 +1,3 @@
-module github.com/symbionix/airstrings-cli
+module github.com/symbionix-sl/airstrings-cli
 
 go 1.26.1

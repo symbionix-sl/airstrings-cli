@@ -12,7 +12,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/symbionix/airstrings-cli/internal/client"
+	"github.com/symbionix-sl/airstrings-cli/internal/client"
 )
 
 // testServer creates an httptest server with handlers for the API endpoints

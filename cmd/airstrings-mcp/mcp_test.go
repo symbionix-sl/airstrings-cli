@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/symbionix/airstrings-cli/internal/workspace"
+	"github.com/symbionix-sl/airstrings-cli/internal/workspace"
 )
 
 // mcpExchange sends a JSON-RPC request to the MCP server and returns the response.

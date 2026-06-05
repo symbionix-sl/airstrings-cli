@@ -6,8 +6,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/symbionix/airstrings-cli/internal/client"
-	"github.com/symbionix/airstrings-cli/internal/workspace"
+	"github.com/symbionix-sl/airstrings-cli/internal/client"
+	"github.com/symbionix-sl/airstrings-cli/internal/workspace"
 )
 
 var toolDefs = []ToolDef{

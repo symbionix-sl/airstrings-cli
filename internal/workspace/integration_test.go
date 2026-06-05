@@ -14,8 +14,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/symbionix/airstrings-cli/internal/client"
-	"github.com/symbionix/airstrings-cli/internal/workspace"
+	"github.com/symbionix-sl/airstrings-cli/internal/client"
+	"github.com/symbionix-sl/airstrings-cli/internal/workspace"
 )
 
 // fullAPI is a more complete test API server that tracks state across

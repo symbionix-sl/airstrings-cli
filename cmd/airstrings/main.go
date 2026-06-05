@@ -9,9 +9,9 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/symbionix/airstrings-cli/internal/client"
-	"github.com/symbionix/airstrings-cli/internal/output"
-	"github.com/symbionix/airstrings-cli/internal/workspace"
+	"github.com/symbionix-sl/airstrings-cli/internal/client"
+	"github.com/symbionix-sl/airstrings-cli/internal/output"
+	"github.com/symbionix-sl/airstrings-cli/internal/workspace"
 )
 
 var version = "dev"
