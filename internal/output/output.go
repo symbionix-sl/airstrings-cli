@@ -10,6 +10,8 @@ import (
 
 var JSONMode bool
 
+const Check = "\x1b[32m✓\x1b[0m"
+
 // JSON prints v as indented JSON.
 func JSON(v any) {
 	data, _ := json.MarshalIndent(v, "", "  ")
@@ -38,7 +40,7 @@ func Auto(v any, headers []string, rows [][]string) {
 
 // Success prints a green success message.
 func Success(msg string) {
-	fmt.Printf("✓ %s\n", msg)
+	fmt.Printf("%s %s\n", Check, msg)
 }
 
 // Errorf prints to stderr and exits.

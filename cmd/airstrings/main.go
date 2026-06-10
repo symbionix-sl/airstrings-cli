@@ -786,7 +786,7 @@ func handlePublish(args []string) {
 
 	for _, r := range resp.Results {
 		if r.Status == "ok" && r.Bundle != nil {
-			fmt.Printf("  ✓ %s  rev %d  (%d strings, %.1fKB)\n",
+			fmt.Printf("  %s %s  rev %d  (%d strings, %.1fKB)\n", output.Check,
 				r.Locale, r.Bundle.Revision, r.Bundle.StringCount, float64(r.Bundle.SizeBytes)/1024)
 		} else {
 			fmt.Printf("  ✗ %s  %s\n", r.Locale, r.Error)
