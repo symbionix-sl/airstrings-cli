@@ -5,10 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.6.0] - 2026-06-11
 
 ### Added
 
+- `airstrings strings ls --local` (also `strings list --local`) — offline workspace listing that reads the `.airstrings` CSVs directly, requiring no credentials or API client. Remote-only flags (`--limit`, `--locale`) are ignored in local mode. Replaces the deprecated `local ls`.
 - `airstrings doctor` interactive ignores — when stdin is a TTY (and `--json` is not set), each `missing` finding prompts `Ignore this check in future runs? [y/N/q]`. Accepted checks are persisted to `.airstrings/doctor.json` (0600) as `<platform>:<relpath>` keys and reported as `ignored` on later runs: shown with a `•` marker, included in `--json` output with `"status": "ignored"`, and excluded from the missing count and the non-zero exit. The new `--no-input` flag disables prompting; non-TTY stdin and `--json` never prompt, so CI behavior is unchanged.
 
 ### Fixed
