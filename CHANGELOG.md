@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `airstrings doctor [dir]` — verifies bundled-fallback integration in the host project, locally and with no API calls. Checks the seed directory (manifest plus bundle files), detects host platforms with a bounded filesystem scan (Xcode, SPM, Bazel, Android, web), and verifies each one references the seed folder correctly — flagging common mistakes like Xcode group references instead of folder references and SPM `.process` instead of `.copy` — with exact fix steps for anything not wired up. Exits non-zero when any check is missing. The first-pull hint after `airstrings bundles pull` now points to it.
+
 ## [0.4.2] - 2026-06-11
 
 ### Changed

@@ -854,6 +854,7 @@ const firstPullHint = `First pull — commit this folder so your apps ship with 
   iOS:     add the folder to your app target as a folder reference (SPM: resources: [.copy("airstrings")])
   Android: copy or map the folder into src/main/assets/
   Web:     Node seeds from <cwd>/airstrings/bundles/ automatically; browsers import bundle JSON at build time
+Then run: airstrings doctor   (verifies your project is wired up)
 See: docs/contracts/bundled-fallback.md
 `
 
