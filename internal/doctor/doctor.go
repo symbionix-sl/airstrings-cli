@@ -70,8 +70,9 @@ func Run(root, bundlesDir string) *Report {
 	scan := scanTree(root, bundlesDir)
 	seed := seedDir(bundlesDir)
 	seedName := filepath.Base(seed)
+	bazel := scan.bazel || bazelAboveRoot(root)
 
-	if !scan.any() {
+	if !scan.any() && !bazel {
 		rep.Checks = append(rep.Checks, Check{
 			Name:   "platforms",
 			Status: StatusManual,
@@ -81,13 +82,20 @@ func Run(root, bundlesDir string) *Report {
 		return rep
 	}
 
+	xcodeOK := false
 	for _, p := range scan.pbxprojs {
-		rep.Checks = append(rep.Checks, checkXcode(p, seed, seedName, root))
+		c := checkXcode(p, seed, seedName, root)
+		if c.Status == StatusOK {
+			xcodeOK = true
+		}
+		rep.Checks = append(rep.Checks, c)
 	}
 	for _, p := range scan.packageSwifts {
-		rep.Checks = append(rep.Checks, checkSPM(p, seedName))
+		if c, relevant := checkSPM(p, seedName, xcodeOK); relevant {
+			rep.Checks = append(rep.Checks, c)
+		}
 	}
-	if scan.bazel {
+	if bazel {
 		rep.Checks = append(rep.Checks, checkBazel(scan.buildFiles, seedName))
 	}
 	if len(scan.gradleFiles) > 0 {
@@ -173,6 +181,25 @@ func scanTree(root, bundlesDir string) *scanResult {
 	}
 	visit(root, 0)
 	return res
+}
+
+var bazelMarkers = []string{"MODULE.bazel", "WORKSPACE", "WORKSPACE.bazel"}
+
+func bazelAboveRoot(root string) bool {
+	dir := root
+	for i := 0; i < 3; i++ {
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return false
+		}
+		dir = parent
+		for _, m := range bazelMarkers {
+			if fileExists(filepath.Join(dir, m)) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func seedDir(bundlesDir string) string {
@@ -294,30 +321,44 @@ func xcodeFix(seedName string) string {
 	return fmt.Sprintf(`in Xcode: File → Add Files to "<App>"… → select the %s/ folder → choose "Create folder references" (blue folder, NOT "Create groups") → ensure your app target is checked. Folder must appear blue in the navigator.`, seedName)
 }
 
-func checkSPM(path, seedName string) Check {
+func checkSPM(path, seedName string, xcodeOK bool) (Check, bool) {
 	c := Check{Name: "spm", Path: path}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		c.Status = StatusMissing
 		c.Detail = fmt.Sprintf("read manifest: %s", err)
 		c.Fix = fmt.Sprintf("add resources: [.copy(%q)] to the target", seedName)
-		return c
+		return c, true
 	}
 	content := string(data)
+	if !strings.Contains(strings.ToLower(content), "airstrings") {
+		return c, false
+	}
 	if callArgContains(content, ".copy(", seedName) {
 		c.Status = StatusOK
 		c.Detail = fmt.Sprintf(".copy resource for %q found", seedName)
-		return c
+		return c, true
 	}
-	c.Status = StatusMissing
 	if callArgContains(content, ".process(", seedName) {
+		if xcodeOK {
+			c.Status = StatusManual
+			c.Detail = fmt.Sprintf("library package — .process flattens the directory and the SDK treats it as absent; change to .copy(%q) only if this package's own bundle must carry strings", seedName)
+			return c, true
+		}
+		c.Status = StatusMissing
 		c.Detail = fmt.Sprintf(".process flattens the directory and the SDK treats it as absent — change to .copy(%q)", seedName)
 		c.Fix = fmt.Sprintf("change .process(%q) to .copy(%q)", seedName, seedName)
-		return c
+		return c, true
 	}
+	if xcodeOK {
+		c.Status = StatusManual
+		c.Detail = fmt.Sprintf("library package — app seed ships via the Xcode folder reference; .copy(%q) only needed if this package's own bundle must carry strings", seedName)
+		return c, true
+	}
+	c.Status = StatusMissing
 	c.Detail = fmt.Sprintf("no .copy resource for %q", seedName)
 	c.Fix = fmt.Sprintf("add resources: [.copy(%q)] to the target", seedName)
-	return c
+	return c, true
 }
 
 func callArgContains(content, call, want string) bool {

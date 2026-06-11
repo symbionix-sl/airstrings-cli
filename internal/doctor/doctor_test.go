@@ -58,7 +58,7 @@ func TestDetection(t *testing.T) {
 			root := t.TempDir()
 			dir := seedBundles(t, root)
 			for _, f := range tc.files {
-				write(t, filepath.Join(root, filepath.FromSlash(f)), "")
+				write(t, filepath.Join(root, filepath.FromSlash(f)), "airstrings")
 			}
 			rep := Run(root, dir)
 			if findCheck(rep, tc.check) == nil {
@@ -86,7 +86,7 @@ func TestDetectionSkipsAndDepthBound(t *testing.T) {
 			root := t.TempDir()
 			dir := seedBundles(t, root)
 			for _, f := range tc.files {
-				write(t, filepath.Join(root, filepath.FromSlash(f)), "")
+				write(t, filepath.Join(root, filepath.FromSlash(f)), "airstrings")
 			}
 			rep := Run(root, dir)
 			if c := findCheck(rep, tc.absent); c != nil {
@@ -209,7 +209,7 @@ func TestSPM(t *testing.T) {
 		},
 		{
 			"absent",
-			`let package = Package(targets: [.target(name: "App")])`,
+			`let package = Package(targets: [.target(name: "App", dependencies: ["AirStrings"])])`,
 			StatusMissing, "no .copy resource", `resources: [.copy("airstrings")]`,
 		},
 	}
@@ -234,6 +234,100 @@ func TestSPM(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestSPMWithXcodePass(t *testing.T) {
+	cases := []struct {
+		name     string
+		pkg      string
+		status   string
+		inDetail string
+	}{
+		{
+			"missing downgraded to manual",
+			`let package = Package(targets: [.target(name: "Lib", dependencies: ["AirStrings"])])`,
+			StatusManual, "library package",
+		},
+		{
+			"process downgraded keeps flatten text",
+			`let package = Package(targets: [.target(name: "Lib", resources: [.process("airstrings")])])`,
+			StatusManual, "flattens",
+		},
+		{
+			"copy stays ok",
+			`let package = Package(targets: [.target(name: "Lib", resources: [.copy("airstrings")])])`,
+			StatusOK, ".copy resource",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			dir := seedBundles(t, root)
+			write(t, filepath.Join(root, "App.xcodeproj", "project.pbxproj"), pbxFolderRef)
+			write(t, filepath.Join(root, "lib", "Package.swift"), tc.pkg)
+			rep := Run(root, dir)
+			c := findCheck(rep, "spm")
+			if c == nil {
+				t.Fatalf("expected spm check, got %+v", rep.Checks)
+			}
+			if c.Status != tc.status {
+				t.Fatalf("status = %q, want %q (detail: %s)", c.Status, tc.status, c.Detail)
+			}
+			if !strings.Contains(c.Detail, tc.inDetail) {
+				t.Errorf("detail missing %q: %s", tc.inDetail, c.Detail)
+			}
+			if c.Status == StatusManual && c.Fix != "" {
+				t.Errorf("manual finding should have no fix: %s", c.Fix)
+			}
+		})
+	}
+
+	t.Run("xcode missing keeps spm missing", func(t *testing.T) {
+		root := t.TempDir()
+		dir := seedBundles(t, root)
+		write(t, filepath.Join(root, "App.xcodeproj", "project.pbxproj"), pbxPlainGroup)
+		write(t, filepath.Join(root, "lib", "Package.swift"),
+			`let package = Package(targets: [.target(name: "Lib", dependencies: ["AirStrings"])])`)
+		rep := Run(root, dir)
+		c := findCheck(rep, "spm")
+		if c == nil || c.Status != StatusMissing {
+			t.Fatalf("expected missing spm check, got %+v", c)
+		}
+	})
+}
+
+func TestSPMSkipsUnrelatedPackage(t *testing.T) {
+	root := t.TempDir()
+	dir := seedBundles(t, root)
+	write(t, filepath.Join(root, "Package.swift"),
+		`let package = Package(name: "Other", targets: [.target(name: "Other")])`)
+	rep := Run(root, dir)
+	if c := findCheck(rep, "spm"); c != nil {
+		t.Fatalf("expected no spm check, got %+v", c)
+	}
+}
+
+func TestBazelAboveRoot(t *testing.T) {
+	t.Run("marker two levels above", func(t *testing.T) {
+		base := t.TempDir()
+		write(t, filepath.Join(base, "MODULE.bazel"), "")
+		root := filepath.Join(base, "a", "b")
+		dir := seedBundles(t, root)
+		rep := Run(root, dir)
+		if c := findCheck(rep, "bazel"); c == nil {
+			t.Fatalf("expected bazel check, got %+v", rep.Checks)
+		}
+	})
+	t.Run("marker four levels above", func(t *testing.T) {
+		base := t.TempDir()
+		write(t, filepath.Join(base, "WORKSPACE"), "")
+		root := filepath.Join(base, "a", "b", "c", "d")
+		dir := seedBundles(t, root)
+		rep := Run(root, dir)
+		if c := findCheck(rep, "bazel"); c != nil {
+			t.Fatalf("expected no bazel check, got %+v", c)
+		}
+	})
 }
 
 func TestBazel(t *testing.T) {
