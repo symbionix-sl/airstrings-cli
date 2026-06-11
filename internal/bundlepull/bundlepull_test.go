@@ -552,6 +552,151 @@ func TestPull_MirrorSemantics(t *testing.T) {
 	}
 }
 
+func TestPull_NoChangeLeavesManifestUntouched(t *testing.T) {
+	kp := newKeypair(t)
+	enBytes := signedBundle(t, kp, testProjectID, "en-US", 3, "2026-06-09T18:00:00Z", sampleStrings())
+
+	cdn := newCDN(t, func(path string, hit int) (int, []byte) {
+		if path == cdnPath("en-US") {
+			return 200, enBytes
+		}
+		return 404, nil
+	})
+	c := newAPI(t, []client.BundleStatus{
+		bundleMeta("en-US", 3, "2026-06-09T18:00:00Z", cdn.srv.URL+cdnPath("en-US")),
+	})
+	dir := filepath.Join(t.TempDir(), "bundles")
+
+	if _, err := Pull(c, Options{Dir: dir, EnvName: "production", CLIVersion: "1.5.0"}); err != nil {
+		t.Fatalf("first pull: %v", err)
+	}
+	first, err := os.ReadFile(filepath.Join(dir, "manifest.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstManifest := readManifestFile(t, dir)
+
+	res, err := Pull(c, Options{Dir: dir, EnvName: "production", CLIVersion: "1.6.0"})
+	if err != nil {
+		t.Fatalf("second pull: %v", err)
+	}
+	if res.FirstPull {
+		t.Error("FirstPull true on second pull")
+	}
+	second, err := os.ReadFile(filepath.Join(dir, "manifest.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(first, second) {
+		t.Errorf("manifest rewritten despite no upstream changes:\nfirst:  %s\nsecond: %s", first, second)
+	}
+	if got := readManifestFile(t, dir).GeneratedAt; got != firstManifest.GeneratedAt {
+		t.Errorf("generated_at changed: %q -> %q", firstManifest.GeneratedAt, got)
+	}
+}
+
+func TestPull_ChangedContentRewritesManifest(t *testing.T) {
+	kp := newKeypair(t)
+	rev3 := signedBundle(t, kp, testProjectID, "en-US", 3, "2026-06-09T18:00:00Z", sampleStrings())
+	rev4 := signedBundle(t, kp, testProjectID, "en-US", 4, "2026-06-10T09:00:00Z", sampleStrings())
+
+	cdn := newCDN(t, func(path string, hit int) (int, []byte) {
+		if path != cdnPath("en-US") {
+			return 404, nil
+		}
+		if hit == 0 {
+			return 200, rev3
+		}
+		return 200, rev4
+	})
+	c3 := newAPI(t, []client.BundleStatus{
+		bundleMeta("en-US", 3, "2026-06-09T18:00:00Z", cdn.srv.URL+cdnPath("en-US")),
+	})
+	c4 := newAPI(t, []client.BundleStatus{
+		bundleMeta("en-US", 4, "2026-06-10T09:00:00Z", cdn.srv.URL+cdnPath("en-US")),
+	})
+	dir := filepath.Join(t.TempDir(), "bundles")
+
+	if _, err := Pull(c3, Options{Dir: dir, EnvName: "production", CLIVersion: "dev"}); err != nil {
+		t.Fatalf("first pull: %v", err)
+	}
+	first, err := os.ReadFile(filepath.Join(dir, "manifest.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	before := time.Now().UTC().Add(-2 * time.Second)
+	if _, err := Pull(c4, Options{Dir: dir, EnvName: "production", CLIVersion: "dev"}); err != nil {
+		t.Fatalf("second pull: %v", err)
+	}
+	second, err := os.ReadFile(filepath.Join(dir, "manifest.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Equal(first, second) {
+		t.Error("manifest not rewritten despite changed upstream revision")
+	}
+
+	m := readManifestFile(t, dir)
+	wantEntries := []ManifestEntry{{Locale: "en-US", File: "en-US.json", Revision: 4, CreatedAt: "2026-06-10T09:00:00Z"}}
+	if !reflect.DeepEqual(m.Bundles, wantEntries) {
+		t.Errorf("manifest bundles = %+v, want %+v", m.Bundles, wantEntries)
+	}
+	ts, err := time.Parse(time.RFC3339, m.GeneratedAt)
+	if err != nil {
+		t.Errorf("generated_at not RFC3339: %v", err)
+	}
+	if !strings.HasSuffix(m.GeneratedAt, "Z") {
+		t.Errorf("generated_at not UTC: %q", m.GeneratedAt)
+	}
+	if ts.Before(before) {
+		t.Errorf("generated_at too old: %q", m.GeneratedAt)
+	}
+}
+
+func TestPull_MalformedManifestRewritten(t *testing.T) {
+	kp := newKeypair(t)
+	enBytes := signedBundle(t, kp, testProjectID, "en-US", 3, "2026-06-09T18:00:00Z", sampleStrings())
+
+	cdn := newCDN(t, func(path string, hit int) (int, []byte) {
+		if path == cdnPath("en-US") {
+			return 200, enBytes
+		}
+		return 404, nil
+	})
+	c := newAPI(t, []client.BundleStatus{
+		bundleMeta("en-US", 3, "2026-06-09T18:00:00Z", cdn.srv.URL+cdnPath("en-US")),
+	})
+	dir := filepath.Join(t.TempDir(), "bundles")
+
+	if _, err := Pull(c, Options{Dir: dir, EnvName: "production", CLIVersion: "dev"}); err != nil {
+		t.Fatalf("first pull: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "manifest.json"), []byte("{not json"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := Pull(c, Options{Dir: dir, EnvName: "production", CLIVersion: "dev"})
+	if err != nil {
+		t.Fatalf("second pull: %v", err)
+	}
+	if res.FirstPull {
+		t.Error("FirstPull true despite existing manifest file")
+	}
+
+	m := readManifestFile(t, dir)
+	wantEntries := []ManifestEntry{{Locale: "en-US", File: "en-US.json", Revision: 3, CreatedAt: "2026-06-09T18:00:00Z"}}
+	if !reflect.DeepEqual(m.Bundles, wantEntries) {
+		t.Errorf("manifest bundles = %+v, want %+v", m.Bundles, wantEntries)
+	}
+	if m.ManifestVersion != 1 {
+		t.Errorf("manifest_version = %d, want 1", m.ManifestVersion)
+	}
+	if _, err := time.Parse(time.RFC3339, m.GeneratedAt); err != nil {
+		t.Errorf("generated_at not RFC3339: %v", err)
+	}
+}
+
 func TestPull_AtomicOnMidPullFailure(t *testing.T) {
 	kp := newKeypair(t)
 	deBytes := signedBundle(t, kp, testProjectID, "de", 4, "2026-06-09T18:00:00Z", sampleStrings())

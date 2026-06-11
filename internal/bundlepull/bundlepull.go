@@ -75,6 +75,23 @@ type ManifestEntry struct {
 	CreatedAt string `json:"created_at"`
 }
 
+func (m *Manifest) equivalent(other *Manifest) bool {
+	if m.ManifestVersion != other.ManifestVersion ||
+		m.OrgID != other.OrgID ||
+		m.ProjectID != other.ProjectID ||
+		m.EnvID != other.EnvID ||
+		m.EnvName != other.EnvName ||
+		len(m.Bundles) != len(other.Bundles) {
+		return false
+	}
+	for i, e := range m.Bundles {
+		if e != other.Bundles[i] {
+			return false
+		}
+	}
+	return true
+}
+
 func ResolveDir(wsDir string, cfg *workspace.WorkspaceConfig, arg string) (string, error) {
 	root := filepath.Dir(wsDir)
 	if arg != "" {
@@ -199,7 +216,7 @@ func Pull(c *client.Client, opts Options) (*Result, error) {
 	}
 	sort.Slice(entries, func(i, j int) bool { return entries[i].Locale < entries[j].Locale })
 
-	manifest := Manifest{
+	manifest := &Manifest{
 		ManifestVersion: 1,
 		GeneratedAt:     time.Now().UTC().Format(time.RFC3339),
 		CLIVersion:      opts.CLIVersion,
@@ -210,7 +227,12 @@ func Pull(c *client.Client, opts Options) (*Result, error) {
 		Bundles:         entries,
 	}
 
-	if err := applyStaged(opts.Dir, files, manifest, stale); err != nil {
+	install := manifest
+	if prev != nil && manifest.equivalent(prev) {
+		install = nil
+	}
+
+	if err := applyStaged(opts.Dir, files, install, stale); err != nil {
 		return nil, err
 	}
 
@@ -222,7 +244,7 @@ type stagedFile struct {
 	data []byte
 }
 
-func applyStaged(dir string, files []stagedFile, manifest Manifest, stale []string) error {
+func applyStaged(dir string, files []stagedFile, manifest *Manifest, stale []string) error {
 	parent := filepath.Dir(dir)
 	if err := os.MkdirAll(parent, 0755); err != nil {
 		return fmt.Errorf("create %s: %w", parent, err)
@@ -238,13 +260,15 @@ func applyStaged(dir string, files []stagedFile, manifest Manifest, stale []stri
 			return fmt.Errorf("stage %s: %w", f.name, err)
 		}
 	}
-	mdata, err := json.MarshalIndent(manifest, "", "  ")
-	if err != nil {
-		return fmt.Errorf("marshal manifest: %w", err)
-	}
-	mdata = append(mdata, '\n')
-	if err := os.WriteFile(filepath.Join(stage, manifestFile), mdata, 0644); err != nil {
-		return fmt.Errorf("stage manifest: %w", err)
+	if manifest != nil {
+		mdata, err := json.MarshalIndent(manifest, "", "  ")
+		if err != nil {
+			return fmt.Errorf("marshal manifest: %w", err)
+		}
+		mdata = append(mdata, '\n')
+		if err := os.WriteFile(filepath.Join(stage, manifestFile), mdata, 0644); err != nil {
+			return fmt.Errorf("stage manifest: %w", err)
+		}
 	}
 
 	if err := os.MkdirAll(dir, 0755); err != nil {
@@ -260,8 +284,10 @@ func applyStaged(dir string, files []stagedFile, manifest Manifest, stale []stri
 			return fmt.Errorf("install %s: %w", f.name, err)
 		}
 	}
-	if err := os.Rename(filepath.Join(stage, manifestFile), filepath.Join(dir, manifestFile)); err != nil {
-		return fmt.Errorf("install manifest: %w", err)
+	if manifest != nil {
+		if err := os.Rename(filepath.Join(stage, manifestFile), filepath.Join(dir, manifestFile)); err != nil {
+			return fmt.Errorf("install manifest: %w", err)
+		}
 	}
 	return nil
 }

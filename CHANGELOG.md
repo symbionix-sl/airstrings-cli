@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-06-10
+
+### Fixed
+
+- `airstrings bundles pull` no longer rewrites `manifest.json` when a pull changes nothing — `generated_at` and `cli_version` alone never force a rewrite, so the file stays byte-untouched and repeated pulls with no upstream changes produce zero diff, making the command idempotent for CI diff guards. The manifest is still rewritten whenever directory contents change, and a malformed `manifest.json` on disk is rewritten to valid content.
+
+## [0.4.0] - 2026-06-10
+
 ### Added
 
 - `airstrings bundles pull [dir] [--locale <bcp47>]` — pulls the active environment's published, signed bundles into a committable seed directory (default `airstrings/bundles/` at the workspace root) so SDKs can serve strings offline on cold starts. Every downloaded artifact is verified CLI-side (Ed25519 signature against the embedded key, plus project/locale/revision cross-checks against the API metadata) and written byte-identical to the CDN object. Pulls are atomic (staged, then moved into place), idempotent with mirror semantics (stale locale files removed, unmanaged files untouched), and record provenance in `manifest.json`. A custom `[dir]` is persisted to `.airstrings/config.json` under `bundles_dir`. Distinct from `airstrings pull`, which fetches draft strings as editable CSVs.
