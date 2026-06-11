@@ -89,6 +89,30 @@ airstrings publish                  # Publish all locales
 airstrings publish en es            # Publish specific locales
 ```
 
+### Offline-safe builds
+
+Ship published bundles inside your app so SDKs can serve strings with no network — cold offline starts, SSG/SSR builds, CI:
+
+```bash
+airstrings bundles pull
+```
+
+This downloads the published, signed bundles for the active environment into `airstrings/bundles/` at the workspace root (plus a `manifest.json` provenance record), verifying every Ed25519 signature before writing. Commit the folder:
+
+```bash
+git add airstrings/bundles
+git commit -m "chore: update bundled fallback strings"
+```
+
+SDKs detect the folder automatically and seed from it on startup, re-verifying every bundle before use. Run the pull in CI or as a pre-release step to keep the committed snapshot fresh.
+
+```bash
+airstrings bundles pull dist/seed         # custom output dir (persisted to workspace config)
+airstrings bundles pull --locale en-US    # restrict to one locale
+```
+
+Not the same as `airstrings pull`: `pull` fetches **draft** workspace strings as editable CSVs for the editing workflow, while `bundles pull` fetches **published, signed** bundles — immutable delivery artifacts for shipping. The two never share an output location.
+
 ### Import
 
 ```bash

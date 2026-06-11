@@ -20,6 +20,8 @@ cmd/airstrings-mcp/        # MCP server (JSON-RPC 2.0 over stdio)
   protocol.go              # JSON-RPC + MCP types
   tools.go                 # Tool definitions and handlers
 internal/
+  bundlepull/               # bundles pull: download, verify, mirror, manifest
+    bundlepull.go           # Pull flow, Ed25519 + canonical JSON verification
   client/                   # HTTP API client (zero external deps)
     client.go               # Base client, request/response, error handling
     projects.go             # Project, environment, locale, bundle operations

@@ -28,6 +28,7 @@ type WorkspaceConfig struct {
 	ProjectID   string       `json:"project_id"`
 	ProjectName string       `json:"project_name"`
 	ActiveEnv   string       `json:"active_env"`
+	BundlesDir  string       `json:"bundles_dir,omitempty"`
 	Credentials []Credential `json:"credentials"`
 }
 

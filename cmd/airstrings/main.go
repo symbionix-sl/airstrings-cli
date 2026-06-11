@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/symbionix-sl/airstrings-cli/internal/bundlepull"
 	"github.com/symbionix-sl/airstrings-cli/internal/client"
 	"github.com/symbionix-sl/airstrings-cli/internal/output"
 	"github.com/symbionix-sl/airstrings-cli/internal/workspace"
@@ -128,6 +129,11 @@ Sections:
 
 Bundles:
   bundles                 List published bundles
+  bundles pull [dir] [--locale <bcp47>]
+                          Pull published, signed bundles into a committable
+                          seed folder (default airstrings/bundles/) for
+                          offline fallback. Distinct from 'pull', which
+                          fetches draft strings as editable CSVs
   publish [locale...]     Publish bundles (all locales if none specified)
 
 Import:
@@ -139,7 +145,8 @@ Workspace:
   local rm <key> [--locale <loc>] [--section <name>]
   local ls [--section <name>]                      List local strings
   push [--section <name>]                          Push local strings to API
-  pull [--section <name>]                          Pull remote strings to local
+  pull [--section <name>]                          Pull remote draft strings to local
+                                                   CSVs (published bundles: bundles pull)
 
 MCP:
   mcp install                  Install MCP server for Claude Code
@@ -813,6 +820,11 @@ func handleSections(args []string) {
 // --- Bundle commands ---
 
 func handleBundles(args []string) {
+	if len(args) > 0 && args[0] == "pull" {
+		handleBundlesPull(args[1:])
+		return
+	}
+
 	c := mustClient()
 
 	bundles, err := c.ListBundles()
@@ -832,6 +844,87 @@ func handleBundles(args []string) {
 		rows = append(rows, []string{b.Locale, fmt.Sprintf("%d", b.Revision), fmt.Sprintf("%d", b.StringCount), size, b.CreatedAt})
 	}
 	output.Table(headers, rows)
+}
+
+const firstPullHint = `First pull — commit this folder so your apps ship with bundled fallback strings.
+  iOS:     add the folder to your app target as a folder reference (SPM: resources: [.copy("airstrings")])
+  Android: copy or map the folder into src/main/assets/
+  Web:     Node seeds from <cwd>/airstrings/bundles/ automatically; browsers import bundle JSON at build time
+See: docs/contracts/bundled-fallback.md
+`
+
+func handleBundlesPull(args []string) {
+	dirArg := ""
+	locale := ""
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--locale":
+			i++
+			if i < len(args) {
+				locale = args[i]
+			}
+		default:
+			if strings.HasPrefix(args[i], "-") {
+				output.Errorf("unknown flag: %s", args[i])
+			}
+			if dirArg != "" {
+				output.Errorf("usage: airstrings bundles pull [dir] [--locale <bcp47>]")
+			}
+			dirArg = args[i]
+		}
+	}
+
+	wsDir, wsCfg := mustWorkspace()
+	dir, err := bundlepull.ResolveDir(wsDir, wsCfg, dirArg)
+	if err != nil {
+		output.Errorf("%s", err)
+	}
+
+	c, err := workspace.ResolveClient(wsCfg)
+	if err != nil {
+		output.Errorf("%s", err)
+	}
+	cred, err := wsCfg.ActiveCredential()
+	if err != nil {
+		output.Errorf("%s", err)
+	}
+
+	res, err := bundlepull.Pull(c, bundlepull.Options{
+		Dir:        dir,
+		Locale:     locale,
+		EnvName:    cred.EnvName,
+		CLIVersion: version,
+	})
+	if err != nil {
+		output.Errorf("bundles pull: %s", err)
+	}
+
+	if res.FirstPull {
+		fmt.Fprint(os.Stderr, firstPullHint)
+	}
+
+	if output.JSONMode {
+		output.JSON(res.JSON())
+		return
+	}
+
+	locales := make([]string, 0, len(res.Pulled))
+	for _, b := range res.Pulled {
+		locales = append(locales, b.Locale)
+	}
+	output.Success(fmt.Sprintf("Pulled %d bundles (locales: %s) into %s", len(res.Pulled), strings.Join(locales, ", "), displayPath(dir)))
+}
+
+func displayPath(p string) string {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return p
+	}
+	rel, err := filepath.Rel(cwd, p)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+		return p
+	}
+	return rel
 }
 
 func handlePublish(args []string) {
