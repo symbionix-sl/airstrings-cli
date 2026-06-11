@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-06-11
+
+### Changed
+
+- **Breaking:** `airstrings strings set` and `airstrings strings rm` are now local-first. They write to the workspace CSVs (the former `local set`/`local rm` behavior, including `--format` and `--section`) instead of calling the API, and work fully offline. Add the new `--push` flag to also sync that single key to the API immediately: `set --push` upserts the key (creating the remote section if needed), `rm --push` deletes the key remotely (or clears just one locale with `--locale`). `strings list/ls` and `strings get` remain remote read-only. `strings create` and `strings delete` are now aliases of `set` and `rm`. The JSON output of `set`/`rm` gains an additive `pushed` field.
+- MCP server: the workspace mutation tools are renamed to match the new CLI namespace — `airstrings_local_set/rm/ls` become `airstrings_strings_set/rm/ls` (same handlers and behavior). `airstrings_strings_set` and `airstrings_strings_rm` gain an optional boolean `push` parameter mirroring the CLI `--push` flag: when true, the key is also synced to the API immediately after the local CSV write, and a client resolution or API failure is returned as a tool error.
+
+### Deprecated
+
+- `airstrings local set/rm/ls` — the commands still work, forward to the new `strings` handlers, and print a deprecation warning to stderr. They will be removed in a future minor release.
+- MCP tool names `airstrings_local_set/rm/ls` — still registered as aliases of the same handlers, with a deprecation note in their tool descriptions. They will be removed in a future minor release.
+
 ## [0.4.3] - 2026-06-11
 
 ### Added
