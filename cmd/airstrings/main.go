@@ -119,7 +119,9 @@ API keys:
   apikey rotate [--env <name>]          Rotate the workspace API key
 
 Strings:
-  strings list [--locale <loc>] [--section <id>] [--limit <n>]
+  strings ls [--local] [--section <name>] [--locale <loc>] [--limit <n>]
+                          List strings (remote by default); --local reads the
+                          workspace CSVs offline (no credentials needed)
   strings get <key>
   strings set <key> <locale>=<value>... [--format text|icu] [--section <name>] [--push]
                           Write to local CSVs; --push also upserts the key to the API
@@ -576,6 +578,10 @@ func handleStrings(args []string) {
 
 	switch args[0] {
 	case "list", "ls":
+		if hasFlag(args[1:], "--local") {
+			listLocalStrings(args[1:])
+			return
+		}
 		handleStringList(mustClient(), args[1:])
 	case "get":
 		if len(args) < 2 {
@@ -1273,7 +1279,20 @@ func warnDeprecated(old, replacement string) {
 	fmt.Fprintf(os.Stderr, "warning: '%s' is deprecated, use '%s'\n", old, replacement)
 }
 
+func hasFlag(args []string, flag string) bool {
+	for _, a := range args {
+		if a == flag {
+			return true
+		}
+	}
+	return false
+}
+
 func handleLocalLs(args []string) {
+	listLocalStrings(args)
+}
+
+func listLocalStrings(args []string) {
 	section := ""
 	for i := 0; i < len(args); i++ {
 		if args[i] == "--section" {

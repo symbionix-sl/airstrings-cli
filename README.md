@@ -69,6 +69,8 @@ airstrings locales                  # List locales with string counts
 ```bash
 airstrings strings list                          # List all strings (remote)
 airstrings strings list --locale en --limit 50   # Filter by locale
+airstrings strings ls --local                    # List local workspace strings (offline, no credentials)
+airstrings strings ls --local --section onboarding   # List one section, offline
 airstrings strings get welcome.title             # Get a single string (remote)
 airstrings strings set welcome.title en="Hello" es="Hola"            # Write to local CSVs
 airstrings strings set app.name en="My App" --format text --push     # Also upsert to the API
@@ -137,9 +139,9 @@ airstrings strings set onboarding.welcome en="Welcome!" it="Benvenuto!" --sectio
 airstrings strings set onboarding.welcome de="Willkommen!" es="¡Bienvenido!" fr="Bienvenue!" --section onboarding
 airstrings strings set app.tagline en="The best app" it="La migliore app" --format text
 
-# List local strings
-airstrings local ls
-airstrings local ls --section onboarding
+# List local strings (offline, no credentials)
+airstrings strings ls --local
+airstrings strings ls --local --section onboarding
 
 # Edit and remove
 airstrings strings set onboarding.welcome en="Welcome to the app!" --section onboarding
@@ -156,7 +158,7 @@ airstrings push --section onboarding   # push single section
 airstrings pull
 ```
 
-The old `local set`, `local rm`, and `local ls` commands are deprecated aliases — they still work but print a warning to stderr.
+The old `local set`, `local rm`, and `local ls` commands are deprecated aliases — they still work but print a warning to stderr. `local ls` is replaced by `strings ls --local`.
 
 The `airstrings init` command creates a `.airstrings/` folder in your project root:
 
