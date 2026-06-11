@@ -11,6 +11,7 @@ import (
 
 	"github.com/symbionix-sl/airstrings-cli/internal/bundlepull"
 	"github.com/symbionix-sl/airstrings-cli/internal/client"
+	"github.com/symbionix-sl/airstrings-cli/internal/doctor"
 	"github.com/symbionix-sl/airstrings-cli/internal/output"
 	"github.com/symbionix-sl/airstrings-cli/internal/workspace"
 )
@@ -64,6 +65,8 @@ func main() {
 		handleSections(args)
 	case "bundles":
 		handleBundles(args)
+	case "doctor":
+		handleDoctor(args)
 	case "publish":
 		handlePublish(args)
 	case "locales":
@@ -135,6 +138,7 @@ Bundles:
                           offline fallback. Distinct from 'pull', which
                           fetches draft strings as editable CSVs
   publish [locale...]     Publish bundles (all locales if none specified)
+  doctor [dir]            Verify bundled-fallback integration in this project
 
 Import:
   import csv <file>       Import strings from CSV file
@@ -925,6 +929,68 @@ func displayPath(p string) string {
 		return p
 	}
 	return rel
+}
+
+func handleDoctor(args []string) {
+	dirArg := ""
+	for _, a := range args {
+		if strings.HasPrefix(a, "-") {
+			output.Errorf("unknown flag: %s", a)
+		}
+		if dirArg != "" {
+			output.Errorf("usage: airstrings doctor [dir]")
+		}
+		dirArg = a
+	}
+
+	wsDir, wsCfg := mustWorkspace()
+	dir, err := doctor.ResolveDir(wsDir, wsCfg, dirArg)
+	if err != nil {
+		output.Errorf("%s", err)
+	}
+
+	report := doctor.Run(filepath.Dir(wsDir), dir)
+
+	if output.JSONMode {
+		output.JSON(report)
+	} else {
+		printDoctorReport(report)
+	}
+
+	if report.HasMissing() {
+		os.Exit(1)
+	}
+}
+
+func printDoctorReport(rep *doctor.Report) {
+	fmt.Printf("Bundles dir: %s\n", displayPath(rep.BundlesDir))
+	ok, missing, manual := 0, 0, 0
+	for _, c := range rep.Checks {
+		var marker string
+		switch c.Status {
+		case doctor.StatusOK:
+			marker, ok = "✓", ok+1
+		case doctor.StatusMissing:
+			marker, missing = "✗", missing+1
+		default:
+			marker, manual = "•", manual+1
+		}
+		detail := c.Detail
+		if c.Path != "" && c.Path != rep.BundlesDir {
+			detail = displayPath(c.Path) + ": " + detail
+		}
+		fmt.Printf("%s %-9s %s\n", marker, c.Name, detail)
+		if c.Status != doctor.StatusOK && c.Fix != "" {
+			for i, line := range strings.Split(c.Fix, "\n") {
+				if i == 0 {
+					fmt.Printf("    fix: %s\n", line)
+				} else {
+					fmt.Printf("         %s\n", line)
+				}
+			}
+		}
+	}
+	fmt.Printf("\n%d ok, %d missing, %d manual\n", ok, missing, manual)
 }
 
 func handlePublish(args []string) {
