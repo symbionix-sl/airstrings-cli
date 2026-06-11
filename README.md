@@ -187,12 +187,12 @@ That's it. Restart Claude and the tools are available.
 ```
 You: "Translate my app's onboarding screen into Italian, German, Spanish, and French"
 
-Claude uses airstrings_local_set:
+Claude uses airstrings_strings_set:
   key: "onboarding.welcome"
   values: {"it": "Benvenuto!", "de": "Willkommen!", "es": "¡Bienvenido!", "fr": "Bienvenue!"}
   section: "onboarding"
 
-Claude uses airstrings_local_set:
+Claude uses airstrings_strings_set:
   key: "onboarding.subtitle"
   values: {"it": "Inizia il tuo viaggio", "de": "Beginne deine Reise", "es": "Comienza tu viaje", "fr": "Commencez votre voyage"}
   section: "onboarding"
@@ -211,12 +211,14 @@ Instead of generating CSV files, the AI calls structured MCP tools -- one call p
 | Tool | Description |
 |------|-------------|
 | `airstrings_init` | Initialize workspace |
-| `airstrings_local_set` | Add/update string in local CSV |
-| `airstrings_local_rm` | Remove string from local CSV |
-| `airstrings_local_ls` | List local strings |
+| `airstrings_strings_set` | Add/update string in local CSV (optional `push` to sync the key to the API immediately) |
+| `airstrings_strings_rm` | Remove string from local CSV (optional `push` to mirror the removal to the API immediately) |
+| `airstrings_strings_ls` | List local strings |
 | `airstrings_push` | Push local strings to API |
 | `airstrings_pull` | Pull remote strings to local |
 | `airstrings_publish` | Publish bundles to CDN |
+
+The former `airstrings_local_set/rm/ls` names still work as deprecated aliases and will be removed in a future minor release.
 
 ### JSON Output
 

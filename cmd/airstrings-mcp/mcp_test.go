@@ -4,8 +4,12 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
 
 	"github.com/symbionix-sl/airstrings-cli/internal/workspace"
@@ -96,13 +100,22 @@ func TestMCP_ToolsList(t *testing.T) {
 	json.Unmarshal(result, &toolsList)
 
 	expectedTools := map[string]bool{
-		"airstrings_init":      false,
-		"airstrings_local_set": false,
-		"airstrings_local_rm":  false,
-		"airstrings_local_ls":  false,
-		"airstrings_push":      false,
-		"airstrings_pull":      false,
-		"airstrings_publish":   false,
+		"airstrings_init":        false,
+		"airstrings_strings_set": false,
+		"airstrings_strings_rm":  false,
+		"airstrings_strings_ls":  false,
+		"airstrings_local_set":   false,
+		"airstrings_local_rm":    false,
+		"airstrings_local_ls":    false,
+		"airstrings_push":        false,
+		"airstrings_pull":        false,
+		"airstrings_publish":     false,
+	}
+
+	deprecatedNotes := map[string]string{
+		"airstrings_local_set": "(deprecated, use airstrings_strings_set)",
+		"airstrings_local_rm":  "(deprecated, use airstrings_strings_rm)",
+		"airstrings_local_ls":  "(deprecated, use airstrings_strings_ls)",
 	}
 
 	for _, tool := range toolsList.Tools {
@@ -115,6 +128,21 @@ func TestMCP_ToolsList(t *testing.T) {
 		if tool.InputSchema.Type != "object" {
 			t.Errorf("tool %q has wrong schema type: %q", tool.Name, tool.InputSchema.Type)
 		}
+		if note, ok := deprecatedNotes[tool.Name]; ok {
+			if !strings.Contains(tool.Description, note) {
+				t.Errorf("tool %q description missing deprecation note %q: %q", tool.Name, note, tool.Description)
+			}
+		} else if strings.Contains(tool.Description, "deprecated") {
+			t.Errorf("tool %q unexpectedly marked deprecated: %q", tool.Name, tool.Description)
+		}
+		if tool.Name == "airstrings_strings_set" || tool.Name == "airstrings_strings_rm" {
+			prop, ok := tool.InputSchema.Properties["push"]
+			if !ok {
+				t.Errorf("tool %q missing push property", tool.Name)
+			} else if prop.Type != "boolean" {
+				t.Errorf("tool %q push property has type %q, want boolean", tool.Name, prop.Type)
+			}
+		}
 	}
 
 	for name, found := range expectedTools {
@@ -124,8 +152,8 @@ func TestMCP_ToolsList(t *testing.T) {
 	}
 }
 
-func TestMCP_ToolCall_LocalSet(t *testing.T) {
-	// Set up a workspace so local_set has somewhere to write
+func TestMCP_ToolCall_StringsSet(t *testing.T) {
+	// Set up a workspace so strings_set has somewhere to write
 	dir := t.TempDir()
 	wsDir := filepath.Join(dir, ".airstrings")
 	workspace.Init(dir, workspace.WorkspaceConfig{
@@ -139,7 +167,7 @@ func TestMCP_ToolCall_LocalSet(t *testing.T) {
 
 	server := &MCPServer{}
 	resp := mcpExchange(t, server, "tools/call", 3, map[string]any{
-		"name": "airstrings_local_set",
+		"name": "airstrings_strings_set",
 		"arguments": map[string]any{
 			"key":    "greeting",
 			"values": `{"en": "Hello", "it": "Ciao"}`,
@@ -181,7 +209,7 @@ func TestMCP_ToolCall_LocalSet(t *testing.T) {
 	}
 }
 
-func TestMCP_ToolCall_LocalSetWithSection(t *testing.T) {
+func TestMCP_ToolCall_StringsSetWithSection(t *testing.T) {
 	dir := t.TempDir()
 	wsDir := filepath.Join(dir, ".airstrings")
 	workspace.Init(dir, workspace.WorkspaceConfig{
@@ -194,7 +222,7 @@ func TestMCP_ToolCall_LocalSetWithSection(t *testing.T) {
 
 	server := &MCPServer{}
 	resp := mcpExchange(t, server, "tools/call", 4, map[string]any{
-		"name": "airstrings_local_set",
+		"name": "airstrings_strings_set",
 		"arguments": map[string]any{
 			"key":     "home.title",
 			"values":  `{"en": "Home", "de": "Startseite"}`,
@@ -221,7 +249,7 @@ func TestMCP_ToolCall_LocalSetWithSection(t *testing.T) {
 	}
 }
 
-func TestMCP_ToolCall_LocalRm(t *testing.T) {
+func TestMCP_ToolCall_StringsRm(t *testing.T) {
 	dir := t.TempDir()
 	wsDir := filepath.Join(dir, ".airstrings")
 	workspace.Init(dir, workspace.WorkspaceConfig{
@@ -241,7 +269,7 @@ func TestMCP_ToolCall_LocalRm(t *testing.T) {
 
 	// Remove single locale
 	resp := mcpExchange(t, server, "tools/call", 5, map[string]any{
-		"name": "airstrings_local_rm",
+		"name": "airstrings_strings_rm",
 		"arguments": map[string]any{
 			"key":    "greeting",
 			"locale": "it",
@@ -265,7 +293,7 @@ func TestMCP_ToolCall_LocalRm(t *testing.T) {
 	}
 }
 
-func TestMCP_ToolCall_LocalLs(t *testing.T) {
+func TestMCP_ToolCall_StringsLs(t *testing.T) {
 	dir := t.TempDir()
 	wsDir := filepath.Join(dir, ".airstrings")
 	workspace.Init(dir, workspace.WorkspaceConfig{
@@ -282,7 +310,7 @@ func TestMCP_ToolCall_LocalLs(t *testing.T) {
 
 	server := &MCPServer{}
 	resp := mcpExchange(t, server, "tools/call", 6, map[string]any{
-		"name":      "airstrings_local_ls",
+		"name":      "airstrings_strings_ls",
 		"arguments": map[string]any{},
 	})
 
@@ -344,7 +372,7 @@ func TestMCP_UnknownMethod(t *testing.T) {
 	}
 }
 
-func TestMCP_ToolCall_LocalSetMissingKey(t *testing.T) {
+func TestMCP_ToolCall_StringsSetMissingKey(t *testing.T) {
 	dir := t.TempDir()
 	workspace.Init(dir, workspace.WorkspaceConfig{
 		ProjectID: "p", ActiveEnv: "e",
@@ -356,7 +384,7 @@ func TestMCP_ToolCall_LocalSetMissingKey(t *testing.T) {
 
 	server := &MCPServer{}
 	resp := mcpExchange(t, server, "tools/call", 9, map[string]any{
-		"name": "airstrings_local_set",
+		"name": "airstrings_strings_set",
 		"arguments": map[string]any{
 			"values": `{"en": "Hello"}`,
 		},
@@ -371,7 +399,7 @@ func TestMCP_ToolCall_LocalSetMissingKey(t *testing.T) {
 	}
 }
 
-func TestMCP_ToolCall_LocalSetInvalidJSON(t *testing.T) {
+func TestMCP_ToolCall_StringsSetInvalidJSON(t *testing.T) {
 	dir := t.TempDir()
 	workspace.Init(dir, workspace.WorkspaceConfig{
 		ProjectID: "p", ActiveEnv: "e",
@@ -383,7 +411,7 @@ func TestMCP_ToolCall_LocalSetInvalidJSON(t *testing.T) {
 
 	server := &MCPServer{}
 	resp := mcpExchange(t, server, "tools/call", 10, map[string]any{
-		"name": "airstrings_local_set",
+		"name": "airstrings_strings_set",
 		"arguments": map[string]any{
 			"key":    "test",
 			"values": "not valid json",
@@ -402,10 +430,10 @@ func TestMCP_ToolCall_LocalSetInvalidJSON(t *testing.T) {
 func TestMCP_FullWorkflow(t *testing.T) {
 	// This test simulates how an AI assistant would use the MCP server:
 	// 1. initialize
-	// 2. local_set multiple strings
-	// 3. local_ls to verify
-	// 4. local_rm one locale
-	// 5. local_ls again
+	// 2. strings_set multiple strings
+	// 3. strings_ls to verify
+	// 4. strings_rm one locale
+	// 5. strings_ls again
 
 	dir := t.TempDir()
 	wsDir := filepath.Join(dir, ".airstrings")
@@ -451,7 +479,7 @@ func TestMCP_FullWorkflow(t *testing.T) {
 			args["section"] = tc.section
 		}
 		resp := mcpExchange(t, server, "tools/call", 2, map[string]any{
-			"name":      "airstrings_local_set",
+			"name":      "airstrings_strings_set",
 			"arguments": args,
 		})
 		resultJSON, _ := json.Marshal(resp.Result)
@@ -464,7 +492,7 @@ func TestMCP_FullWorkflow(t *testing.T) {
 
 	// Step 3: List all strings
 	resp = mcpExchange(t, server, "tools/call", 3, map[string]any{
-		"name":      "airstrings_local_ls",
+		"name":      "airstrings_strings_ls",
 		"arguments": map[string]any{},
 	})
 	resultJSON, _ := json.Marshal(resp.Result)
@@ -484,7 +512,7 @@ func TestMCP_FullWorkflow(t *testing.T) {
 
 	// Step 4: Remove Italian from home.welcome
 	resp = mcpExchange(t, server, "tools/call", 4, map[string]any{
-		"name": "airstrings_local_rm",
+		"name": "airstrings_strings_rm",
 		"arguments": map[string]any{
 			"key":     "home.welcome",
 			"locale":  "it",
@@ -500,7 +528,7 @@ func TestMCP_FullWorkflow(t *testing.T) {
 
 	// Step 5: Verify home section now has 4 rows (was 5, removed 1)
 	resp = mcpExchange(t, server, "tools/call", 5, map[string]any{
-		"name": "airstrings_local_ls",
+		"name": "airstrings_strings_ls",
 		"arguments": map[string]any{
 			"section": "home",
 		},
@@ -535,5 +563,211 @@ func TestMCP_FullWorkflow(t *testing.T) {
 		if r.Key == "greeting" && r.Format != "icu" {
 			t.Errorf("expected icu format for greeting, got %q", r.Format)
 		}
+	}
+}
+
+func callTool(t *testing.T, server *MCPServer, id int, name string, args map[string]any) *CallToolResult {
+	t.Helper()
+	resp := mcpExchange(t, server, "tools/call", id, map[string]any{
+		"name":      name,
+		"arguments": args,
+	})
+	if resp.Error != nil {
+		t.Fatalf("unexpected JSON-RPC error: %+v", resp.Error)
+	}
+	resultJSON, _ := json.Marshal(resp.Result)
+	var result CallToolResult
+	json.Unmarshal(resultJSON, &result)
+	return &result
+}
+
+func recordingServer(t *testing.T) (*httptest.Server, func() []string) {
+	t.Helper()
+	var mu sync.Mutex
+	var requests []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		requests = append(requests, r.Method+" "+r.URL.Path)
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{}`))
+	}))
+	t.Cleanup(srv.Close)
+	return srv, func() []string {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]string(nil), requests...)
+	}
+}
+
+func setupPushWorkspace(t *testing.T, baseURL string) string {
+	t.Helper()
+	dir := t.TempDir()
+	workspace.Init(dir, workspace.WorkspaceConfig{
+		ProjectID: "p",
+		ActiveEnv: "e",
+		Credentials: []workspace.Credential{
+			{APIKey: "k", BaseURL: baseURL, EnvID: "e", EnvName: "test"},
+		},
+	})
+	origDir, _ := os.Getwd()
+	os.Chdir(dir)
+	t.Cleanup(func() { os.Chdir(origDir) })
+	return filepath.Join(dir, ".airstrings")
+}
+
+func TestMCP_ToolCall_DeprecatedLocalAliases(t *testing.T) {
+	dir := t.TempDir()
+	wsDir := filepath.Join(dir, ".airstrings")
+	workspace.Init(dir, workspace.WorkspaceConfig{
+		ProjectID: "p", ActiveEnv: "e",
+	})
+
+	origDir, _ := os.Getwd()
+	os.Chdir(dir)
+	defer os.Chdir(origDir)
+
+	server := &MCPServer{}
+
+	result := callTool(t, server, 11, "airstrings_local_set", map[string]any{
+		"key":    "greeting",
+		"values": `{"en": "Hello", "it": "Ciao"}`,
+	})
+	if result.IsError {
+		t.Fatalf("local_set alias error: %s", result.Content[0].Text)
+	}
+
+	result = callTool(t, server, 12, "airstrings_local_ls", map[string]any{})
+	if result.IsError {
+		t.Fatalf("local_ls alias error: %s", result.Content[0].Text)
+	}
+	var entries []struct{ Key string }
+	json.Unmarshal([]byte(result.Content[0].Text), &entries)
+	if len(entries) != 2 {
+		t.Errorf("expected 2 entries, got %d", len(entries))
+	}
+
+	result = callTool(t, server, 13, "airstrings_local_rm", map[string]any{
+		"key":    "greeting",
+		"locale": "it",
+	})
+	if result.IsError {
+		t.Fatalf("local_rm alias error: %s", result.Content[0].Text)
+	}
+
+	rows, _ := workspace.ReadCSV(workspace.CSVPath(wsDir, ""))
+	if len(rows) != 1 {
+		t.Errorf("expected 1 row after alias rm, got %d", len(rows))
+	}
+}
+
+func TestMCP_ToolCall_StringsSetPush(t *testing.T) {
+	srv, recorded := recordingServer(t)
+	wsDir := setupPushWorkspace(t, srv.URL)
+
+	server := &MCPServer{}
+	result := callTool(t, server, 14, "airstrings_strings_set", map[string]any{
+		"key":    "greeting",
+		"values": `{"en": "Hello"}`,
+		"push":   true,
+	})
+	if result.IsError {
+		t.Fatalf("tool returned error: %s", result.Content[0].Text)
+	}
+
+	rows, err := workspace.ReadCSV(workspace.CSVPath(wsDir, ""))
+	if err != nil {
+		t.Fatalf("read CSV: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Errorf("expected 1 row, got %d", len(rows))
+	}
+
+	requests := recorded()
+	if len(requests) != 1 || requests[0] != "PUT /v1/projects/p/environments/e/strings/greeting" {
+		t.Errorf("unexpected requests: %v", requests)
+	}
+
+	var out struct {
+		Pushed bool `json:"pushed"`
+	}
+	json.Unmarshal([]byte(result.Content[0].Text), &out)
+	if !out.Pushed {
+		t.Error("expected pushed=true in result")
+	}
+}
+
+func TestMCP_ToolCall_StringsRmPush(t *testing.T) {
+	srv, recorded := recordingServer(t)
+	wsDir := setupPushWorkspace(t, srv.URL)
+	workspace.SetRows(workspace.CSVPath(wsDir, ""), "greeting", map[string]string{"en": "Hello"}, "text")
+
+	server := &MCPServer{}
+	result := callTool(t, server, 15, "airstrings_strings_rm", map[string]any{
+		"key":  "greeting",
+		"push": true,
+	})
+	if result.IsError {
+		t.Fatalf("tool returned error: %s", result.Content[0].Text)
+	}
+
+	requests := recorded()
+	if len(requests) != 1 || requests[0] != "DELETE /v1/projects/p/environments/e/strings/greeting" {
+		t.Errorf("unexpected requests: %v", requests)
+	}
+	if !strings.Contains(result.Content[0].Text, "(pushed)") {
+		t.Errorf("expected pushed marker in result, got %q", result.Content[0].Text)
+	}
+}
+
+func TestMCP_ToolCall_NoPushNoNetwork(t *testing.T) {
+	srv, recorded := recordingServer(t)
+	setupPushWorkspace(t, srv.URL)
+
+	server := &MCPServer{}
+	result := callTool(t, server, 16, "airstrings_strings_set", map[string]any{
+		"key":    "greeting",
+		"values": `{"en": "Hello"}`,
+	})
+	if result.IsError {
+		t.Fatalf("set error: %s", result.Content[0].Text)
+	}
+
+	result = callTool(t, server, 17, "airstrings_strings_rm", map[string]any{
+		"key":  "greeting",
+		"push": false,
+	})
+	if result.IsError {
+		t.Fatalf("rm error: %s", result.Content[0].Text)
+	}
+
+	if requests := recorded(); len(requests) != 0 {
+		t.Errorf("expected no API requests, got %v", requests)
+	}
+}
+
+func TestMCP_ToolCall_PushWithoutCredentials(t *testing.T) {
+	dir := t.TempDir()
+	workspace.Init(dir, workspace.WorkspaceConfig{
+		ProjectID: "p", ActiveEnv: "e",
+	})
+
+	origDir, _ := os.Getwd()
+	os.Chdir(dir)
+	defer os.Chdir(origDir)
+
+	server := &MCPServer{}
+	result := callTool(t, server, 18, "airstrings_strings_set", map[string]any{
+		"key":    "greeting",
+		"values": `{"en": "Hello"}`,
+		"push":   true,
+	})
+	if !result.IsError {
+		t.Fatal("expected isError=true when push has no credentials")
+	}
+
+	resp := mcpExchange(t, server, "tools/list", 19, map[string]any{})
+	if resp.Error != nil {
+		t.Fatalf("server stopped responding after failed push: %+v", resp.Error)
 	}
 }

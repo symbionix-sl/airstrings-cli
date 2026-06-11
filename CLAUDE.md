@@ -128,7 +128,7 @@ Configure in Claude Desktop or any MCP client:
 }
 ```
 
-Tools: `airstrings_init`, `airstrings_local_set`, `airstrings_local_rm`, `airstrings_local_ls`, `airstrings_push`, `airstrings_pull`, `airstrings_publish`
+Tools: `airstrings_init`, `airstrings_strings_set`, `airstrings_strings_rm`, `airstrings_strings_ls`, `airstrings_push`, `airstrings_pull`, `airstrings_publish`. `airstrings_strings_set`/`airstrings_strings_rm` accept an optional boolean `push` mirroring the CLI `--push` flag (syncs that single key to the API after the local write). The old `airstrings_local_set/rm/ls` names remain registered as deprecated aliases of the same handlers.
 
 ## Non-Negotiables
 
@@ -147,7 +147,7 @@ go test ./...
 ```
 
 Tests should:
-- Use `testing` package and `testify/assert` (the one allowed test dep)
+- Use the stdlib `testing` package only — no test dependencies
 - Test client methods with httptest servers, not mocks
 - Test config load/save with temp directories
 - Test output formatting with captured stdout

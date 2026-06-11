@@ -10,6 +10,42 @@ import (
 	"github.com/symbionix-sl/airstrings-cli/internal/workspace"
 )
 
+const (
+	stringsSetDescription = "Add or update a string in the local workspace CSV. Writes to .airstrings/<section>/<section>.csv or .airstrings/strings.csv. Local by default; set push=true to also sync the key to the API immediately."
+	stringsRmDescription  = "Remove a string from the local workspace CSV. Local by default; set push=true to also mirror the removal to the API immediately."
+	stringsLsDescription  = "List all strings in the local workspace. Returns strings from local CSV files, not from the API."
+)
+
+var stringsSetSchema = InputSchema{
+	Type: "object",
+	Properties: map[string]Property{
+		"key":     {Type: "string", Description: "The string key (e.g., 'onboarding.welcome')"},
+		"values":  {Type: "string", Description: "JSON object of locale=value pairs, e.g. {\"en\": \"Hello\", \"it\": \"Ciao\"}"},
+		"format":  {Type: "string", Description: "String format: 'text' (default) or 'icu'"},
+		"section": {Type: "string", Description: "Section name. If omitted, string goes to flat strings.csv"},
+		"push":    {Type: "boolean", Description: "Also push this key to the API immediately after the local write."},
+	},
+	Required: []string{"key", "values"},
+}
+
+var stringsRmSchema = InputSchema{
+	Type: "object",
+	Properties: map[string]Property{
+		"key":     {Type: "string", Description: "The string key to remove"},
+		"locale":  {Type: "string", Description: "Remove only this locale. If omitted, removes all locales for the key."},
+		"section": {Type: "string", Description: "Section to remove from. If omitted, removes from flat strings.csv"},
+		"push":    {Type: "boolean", Description: "Also mirror the removal to the API immediately."},
+	},
+	Required: []string{"key"},
+}
+
+var stringsLsSchema = InputSchema{
+	Type: "object",
+	Properties: map[string]Property{
+		"section": {Type: "string", Description: "Filter to a specific section. If omitted, lists all sections."},
+	},
+}
+
 var toolDefs = []ToolDef{
 	{
 		Name:        "airstrings_init",
@@ -25,41 +61,34 @@ var toolDefs = []ToolDef{
 		},
 	},
 	{
+		Name:        "airstrings_strings_set",
+		Description: stringsSetDescription,
+		InputSchema: stringsSetSchema,
+	},
+	{
+		Name:        "airstrings_strings_rm",
+		Description: stringsRmDescription,
+		InputSchema: stringsRmSchema,
+	},
+	{
+		Name:        "airstrings_strings_ls",
+		Description: stringsLsDescription,
+		InputSchema: stringsLsSchema,
+	},
+	{
 		Name:        "airstrings_local_set",
-		Description: "Add or update a string in the local workspace CSV. Writes to .airstrings/<section>/<section>.csv or .airstrings/strings.csv. Does not call the API — changes are local until pushed.",
-		InputSchema: InputSchema{
-			Type: "object",
-			Properties: map[string]Property{
-				"key":     {Type: "string", Description: "The string key (e.g., 'onboarding.welcome')"},
-				"values":  {Type: "string", Description: "JSON object of locale=value pairs, e.g. {\"en\": \"Hello\", \"it\": \"Ciao\"}"},
-				"format":  {Type: "string", Description: "String format: 'text' (default) or 'icu'"},
-				"section": {Type: "string", Description: "Section name. If omitted, string goes to flat strings.csv"},
-			},
-			Required: []string{"key", "values"},
-		},
+		Description: stringsSetDescription + " (deprecated, use airstrings_strings_set)",
+		InputSchema: stringsSetSchema,
 	},
 	{
 		Name:        "airstrings_local_rm",
-		Description: "Remove a string from the local workspace CSV. Does not call the API — changes are local until pushed.",
-		InputSchema: InputSchema{
-			Type: "object",
-			Properties: map[string]Property{
-				"key":     {Type: "string", Description: "The string key to remove"},
-				"locale":  {Type: "string", Description: "Remove only this locale. If omitted, removes all locales for the key."},
-				"section": {Type: "string", Description: "Section to remove from. If omitted, removes from flat strings.csv"},
-			},
-			Required: []string{"key"},
-		},
+		Description: stringsRmDescription + " (deprecated, use airstrings_strings_rm)",
+		InputSchema: stringsRmSchema,
 	},
 	{
 		Name:        "airstrings_local_ls",
-		Description: "List all strings in the local workspace. Returns strings from local CSV files, not from the API.",
-		InputSchema: InputSchema{
-			Type: "object",
-			Properties: map[string]Property{
-				"section": {Type: "string", Description: "Filter to a specific section. If omitted, lists all sections."},
-			},
-		},
+		Description: stringsLsDescription + " (deprecated, use airstrings_strings_ls)",
+		InputSchema: stringsLsSchema,
 	},
 	{
 		Name:        "airstrings_push",
@@ -96,13 +125,16 @@ var toolDefs = []ToolDef{
 type toolHandler func(args json.RawMessage) *CallToolResult
 
 var toolHandlers = map[string]toolHandler{
-	"airstrings_init":      handleToolInit,
-	"airstrings_local_set": handleToolLocalSet,
-	"airstrings_local_rm":  handleToolLocalRm,
-	"airstrings_local_ls":  handleToolLocalLs,
-	"airstrings_push":      handleToolPush,
-	"airstrings_pull":      handleToolPull,
-	"airstrings_publish":   handleToolPublish,
+	"airstrings_init":        handleToolInit,
+	"airstrings_strings_set": handleToolStringsSet,
+	"airstrings_strings_rm":  handleToolStringsRm,
+	"airstrings_strings_ls":  handleToolStringsLs,
+	"airstrings_local_set":   handleToolStringsSet,
+	"airstrings_local_rm":    handleToolStringsRm,
+	"airstrings_local_ls":    handleToolStringsLs,
+	"airstrings_push":        handleToolPush,
+	"airstrings_pull":        handleToolPull,
+	"airstrings_publish":     handleToolPublish,
 }
 
 func handleToolInit(raw json.RawMessage) *CallToolResult {
@@ -186,12 +218,25 @@ func handleToolInit(raw json.RawMessage) *CallToolResult {
 	return textResult(string(result))
 }
 
-func handleToolLocalSet(raw json.RawMessage) *CallToolResult {
+func resolvePushClient(wsDir string) (*client.Client, *CallToolResult) {
+	wsCfg, err := workspace.LoadConfig(wsDir)
+	if err != nil {
+		return nil, errorResult(err.Error())
+	}
+	c, err := workspace.ResolveClient(wsCfg)
+	if err != nil {
+		return nil, errorResult(err.Error())
+	}
+	return c, nil
+}
+
+func handleToolStringsSet(raw json.RawMessage) *CallToolResult {
 	var args struct {
 		Key     string `json:"key"`
 		Values  string `json:"values"`
 		Format  string `json:"format"`
 		Section string `json:"section"`
+		Push    bool   `json:"push"`
 	}
 	json.Unmarshal(raw, &args)
 
@@ -229,20 +274,32 @@ func handleToolLocalSet(raw json.RawMessage) *CallToolResult {
 		return errorResult(fmt.Sprintf("set rows: %s", err))
 	}
 
+	if args.Push {
+		c, errRes := resolvePushClient(wsDir)
+		if errRes != nil {
+			return errRes
+		}
+		if err := workspace.PushKey(c, args.Key, values, format, args.Section); err != nil {
+			return errorResult(fmt.Sprintf("push %s: %s", args.Key, err))
+		}
+	}
+
 	result, _ := json.Marshal(map[string]any{
 		"key":     args.Key,
 		"locales": len(values),
 		"section": args.Section,
 		"format":  format,
+		"pushed":  args.Push,
 	})
 	return textResult(string(result))
 }
 
-func handleToolLocalRm(raw json.RawMessage) *CallToolResult {
+func handleToolStringsRm(raw json.RawMessage) *CallToolResult {
 	var args struct {
 		Key     string `json:"key"`
 		Locale  string `json:"locale"`
 		Section string `json:"section"`
+		Push    bool   `json:"push"`
 	}
 	json.Unmarshal(raw, &args)
 
@@ -260,10 +317,24 @@ func handleToolLocalRm(raw json.RawMessage) *CallToolResult {
 		return errorResult(fmt.Sprintf("remove rows: %s", err))
 	}
 
-	return textResult(fmt.Sprintf("removed %s", args.Key))
+	if args.Push {
+		c, errRes := resolvePushClient(wsDir)
+		if errRes != nil {
+			return errRes
+		}
+		if err := workspace.PushKeyRemoval(c, args.Key, args.Locale); err != nil {
+			return errorResult(fmt.Sprintf("push removal %s: %s", args.Key, err))
+		}
+	}
+
+	msg := fmt.Sprintf("removed %s", args.Key)
+	if args.Push {
+		msg += " (pushed)"
+	}
+	return textResult(msg)
 }
 
-func handleToolLocalLs(raw json.RawMessage) *CallToolResult {
+func handleToolStringsLs(raw json.RawMessage) *CallToolResult {
 	var args struct {
 		Section string `json:"section"`
 	}
