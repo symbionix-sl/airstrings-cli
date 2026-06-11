@@ -143,7 +143,8 @@ Bundles:
                           offline fallback. Distinct from 'pull', which
                           fetches draft strings as editable CSVs
   publish [locale...]     Publish bundles (all locales if none specified)
-  doctor [dir]            Verify bundled-fallback integration in this project
+  doctor [dir] [--no-input]
+                          Verify bundled-fallback integration in this project
 
 Import:
   import csv <file>       Import strings from CSV file
@@ -1003,12 +1004,17 @@ func displayPath(p string) string {
 
 func handleDoctor(args []string) {
 	dirArg := ""
+	noInput := false
 	for _, a := range args {
+		if a == "--no-input" {
+			noInput = true
+			continue
+		}
 		if strings.HasPrefix(a, "-") {
 			output.Errorf("unknown flag: %s", a)
 		}
 		if dirArg != "" {
-			output.Errorf("usage: airstrings doctor [dir]")
+			output.Errorf("usage: airstrings doctor [dir] [--no-input]")
 		}
 		dirArg = a
 	}
@@ -1019,12 +1025,22 @@ func handleDoctor(args []string) {
 		output.Errorf("%s", err)
 	}
 
-	report := doctor.Run(filepath.Dir(wsDir), dir)
+	root := filepath.Dir(wsDir)
+	report := doctor.Run(root, dir)
 
 	if output.JSONMode {
 		output.JSON(report)
 	} else {
 		printDoctorReport(report)
+		if !noInput && stdinIsTTY() && report.HasMissing() {
+			changed, err := doctor.PromptIgnores(report, root, os.Stdin, os.Stdout)
+			if err != nil {
+				output.Errorf("%s", err)
+			}
+			if changed {
+				fmt.Printf("\n%s\n", doctorSummary(report))
+			}
+		}
 	}
 
 	if report.HasMissing() {
@@ -1032,18 +1048,22 @@ func handleDoctor(args []string) {
 	}
 }
 
+func stdinIsTTY() bool {
+	info, err := os.Stdin.Stat()
+	return err == nil && info.Mode()&os.ModeCharDevice != 0
+}
+
 func printDoctorReport(rep *doctor.Report) {
 	fmt.Printf("Bundles dir: %s\n", displayPath(rep.BundlesDir))
-	ok, missing, manual := 0, 0, 0
 	for _, c := range rep.Checks {
 		var marker string
 		switch c.Status {
 		case doctor.StatusOK:
-			marker, ok = "✓", ok+1
+			marker = "✓"
 		case doctor.StatusMissing:
-			marker, missing = "✗", missing+1
+			marker = "✗"
 		default:
-			marker, manual = "•", manual+1
+			marker = "•"
 		}
 		detail := c.Detail
 		if c.Path != "" && c.Path != rep.BundlesDir {
@@ -1060,7 +1080,28 @@ func printDoctorReport(rep *doctor.Report) {
 			}
 		}
 	}
-	fmt.Printf("\n%d ok, %d missing, %d manual\n", ok, missing, manual)
+	fmt.Printf("\n%s\n", doctorSummary(rep))
+}
+
+func doctorSummary(rep *doctor.Report) string {
+	ok, missing, manual, ignored := 0, 0, 0, 0
+	for _, c := range rep.Checks {
+		switch c.Status {
+		case doctor.StatusOK:
+			ok++
+		case doctor.StatusMissing:
+			missing++
+		case doctor.StatusIgnored:
+			ignored++
+		default:
+			manual++
+		}
+	}
+	s := fmt.Sprintf("%d ok, %d missing, %d manual", ok, missing, manual)
+	if ignored > 0 {
+		s += fmt.Sprintf(", %d ignored", ignored)
+	}
+	return s
 }
 
 func handlePublish(args []string) {

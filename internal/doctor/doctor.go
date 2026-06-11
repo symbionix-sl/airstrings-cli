@@ -14,6 +14,7 @@ const (
 	StatusOK      = "ok"
 	StatusMissing = "missing"
 	StatusManual  = "manual"
+	StatusIgnored = "ignored"
 
 	manifestFile = "manifest.json"
 	maxDepth     = 4
@@ -64,6 +65,12 @@ func ResolveDir(wsDir string, cfg *workspace.WorkspaceConfig, arg string) (strin
 }
 
 func Run(root, bundlesDir string) *Report {
+	rep := buildReport(root, bundlesDir)
+	applyIgnores(rep, root)
+	return rep
+}
+
+func buildReport(root, bundlesDir string) *Report {
 	rep := &Report{BundlesDir: bundlesDir}
 	rep.Checks = append(rep.Checks, checkBundles(bundlesDir))
 

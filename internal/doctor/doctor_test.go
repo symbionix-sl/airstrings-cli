@@ -2,6 +2,8 @@ package doctor
 
 import (
 	"bytes"
+	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -556,6 +558,191 @@ func TestDoctorDoesNotMutateConfig(t *testing.T) {
 	}
 	if !bytes.Equal(before, after) {
 		t.Fatalf("config.json changed:\nbefore: %s\nafter:  %s", before, after)
+	}
+}
+
+func TestIgnoredFindings(t *testing.T) {
+	t.Run("matching finding ignored and excluded from HasMissing", func(t *testing.T) {
+		root := t.TempDir()
+		dir := seedBundles(t, root)
+		write(t, filepath.Join(root, "App.xcodeproj", "project.pbxproj"), pbxPlainGroup)
+		write(t, filepath.Join(root, ".airstrings", "doctor.json"),
+			`{"ignored":["xcode:App.xcodeproj/project.pbxproj"]}`)
+		rep := Run(root, dir)
+		c := findCheck(rep, "xcode")
+		if c == nil || c.Status != StatusIgnored {
+			t.Fatalf("expected ignored xcode check, got %+v", c)
+		}
+		if c.Fix != "" {
+			t.Errorf("ignored finding should have no fix: %s", c.Fix)
+		}
+		if !strings.Contains(c.Detail, "doctor.json") {
+			t.Errorf("detail missing ignore source: %s", c.Detail)
+		}
+		if rep.HasMissing() {
+			t.Fatalf("ignored finding counted as missing: %+v", rep.Checks)
+		}
+	})
+	t.Run("non-matching finding untouched", func(t *testing.T) {
+		root := t.TempDir()
+		dir := seedBundles(t, root)
+		write(t, filepath.Join(root, "App.xcodeproj", "project.pbxproj"), pbxPlainGroup)
+		write(t, filepath.Join(root, "lib", "Package.swift"),
+			`let package = Package(targets: [.target(name: "Lib", dependencies: ["AirStrings"])])`)
+		write(t, filepath.Join(root, ".airstrings", "doctor.json"),
+			`{"ignored":["xcode:App.xcodeproj/project.pbxproj"]}`)
+		rep := Run(root, dir)
+		c := findCheck(rep, "spm")
+		if c == nil || c.Status != StatusMissing {
+			t.Fatalf("expected missing spm check, got %+v", c)
+		}
+		if !rep.HasMissing() {
+			t.Fatal("expected HasMissing with non-matching finding")
+		}
+	})
+}
+
+func TestPromptIgnores(t *testing.T) {
+	setup := func(t *testing.T) (string, string) {
+		t.Helper()
+		root := t.TempDir()
+		dir := seedBundles(t, root)
+		write(t, filepath.Join(root, "App.xcodeproj", "project.pbxproj"), pbxPlainGroup)
+		return root, dir
+	}
+
+	t.Run("yes persists and downgrades", func(t *testing.T) {
+		root, dir := setup(t)
+		rep := Run(root, dir)
+		var out bytes.Buffer
+		changed, err := PromptIgnores(rep, root, strings.NewReader("y\n"), &out)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !changed {
+			t.Fatal("expected change")
+		}
+		if !strings.Contains(out.String(), "[y/N/q]") {
+			t.Errorf("prompt not printed: %s", out.String())
+		}
+		c := findCheck(rep, "xcode")
+		if c == nil || c.Status != StatusIgnored {
+			t.Fatalf("expected ignored xcode check, got %+v", c)
+		}
+		if rep.HasMissing() {
+			t.Fatal("expected no missing after ignore")
+		}
+		path := filepath.Join(root, ".airstrings", "doctor.json")
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if perm := info.Mode().Perm(); perm != 0600 {
+			t.Fatalf("perm = %o, want 0600", perm)
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var cfg ignoreConfig
+		if err := json.Unmarshal(data, &cfg); err != nil {
+			t.Fatalf("invalid json: %v\n%s", err, data)
+		}
+		want := "xcode:App.xcodeproj/project.pbxproj"
+		if len(cfg.Ignored) != 1 || cfg.Ignored[0] != want {
+			t.Fatalf("ignored = %v, want [%s]", cfg.Ignored, want)
+		}
+
+		rep2 := Run(root, dir)
+		c2 := findCheck(rep2, "xcode")
+		if c2 == nil || c2.Status != StatusIgnored {
+			t.Fatalf("expected ignored xcode check on second run, got %+v", c2)
+		}
+	})
+
+	t.Run("q stops prompting", func(t *testing.T) {
+		root, dir := setup(t)
+		write(t, filepath.Join(root, "lib", "Package.swift"),
+			`let package = Package(targets: [.target(name: "Lib", dependencies: ["AirStrings"])])`)
+		rep := Run(root, dir)
+		var out bytes.Buffer
+		changed, err := PromptIgnores(rep, root, strings.NewReader("q\n"), &out)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if changed {
+			t.Fatal("expected no change")
+		}
+		if n := strings.Count(out.String(), "[y/N/q]"); n != 1 {
+			t.Fatalf("prompt count = %d, want 1", n)
+		}
+		if !rep.HasMissing() {
+			t.Fatal("expected findings to stay missing")
+		}
+		if fileExists(filepath.Join(root, ".airstrings", "doctor.json")) {
+			t.Fatal("doctor.json should not be created")
+		}
+	})
+
+	t.Run("empty keeps missing", func(t *testing.T) {
+		root, dir := setup(t)
+		rep := Run(root, dir)
+		var out bytes.Buffer
+		changed, err := PromptIgnores(rep, root, strings.NewReader("\n"), &out)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if changed {
+			t.Fatal("expected no change")
+		}
+		c := findCheck(rep, "xcode")
+		if c == nil || c.Status != StatusMissing {
+			t.Fatalf("expected missing xcode check, got %+v", c)
+		}
+		if fileExists(filepath.Join(root, ".airstrings", "doctor.json")) {
+			t.Fatal("doctor.json should not be created")
+		}
+	})
+}
+
+func TestIgnoreFileMalformed(t *testing.T) {
+	root := t.TempDir()
+	dir := seedBundles(t, root)
+	write(t, filepath.Join(root, "App.xcodeproj", "project.pbxproj"), pbxPlainGroup)
+	igPath := filepath.Join(root, ".airstrings", "doctor.json")
+	write(t, igPath, "{not json")
+
+	rep := Run(root, dir)
+	c := findCheck(rep, "xcode")
+	if c == nil || c.Status != StatusMissing {
+		t.Fatalf("expected missing xcode check, got %+v", c)
+	}
+	data, err := os.ReadFile(igPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "{not json" {
+		t.Fatalf("file rewritten without new ignore: %s", data)
+	}
+
+	changed, err := PromptIgnores(rep, root, strings.NewReader("y\n"), io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !changed {
+		t.Fatal("expected change")
+	}
+	data, err = os.ReadFile(igPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg ignoreConfig
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Fatalf("invalid json after rewrite: %v\n%s", err, data)
+	}
+	want := "xcode:App.xcodeproj/project.pbxproj"
+	if len(cfg.Ignored) != 1 || cfg.Ignored[0] != want {
+		t.Fatalf("ignored = %v, want [%s]", cfg.Ignored, want)
 	}
 }
 
