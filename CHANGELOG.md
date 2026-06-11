@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- `airstrings doctor` interactive ignores — when stdin is a TTY (and `--json` is not set), each `missing` finding prompts `Ignore this check in future runs? [y/N/q]`. Accepted checks are persisted to `.airstrings/doctor.json` (0600) as `<platform>:<relpath>` keys and reported as `ignored` on later runs: shown with a `•` marker, included in `--json` output with `"status": "ignored"`, and excluded from the missing count and the non-zero exit. The new `--no-input` flag disables prompting; non-TTY stdin and `--json` never prompt, so CI behavior is unchanged.
+
+### Fixed
+
+- `airstrings doctor` no longer fails dual-build apps over SPM library packages: `Package.swift` files that never reference AirStrings are skipped entirely, and when an Xcode check passes, `missing` SPM findings (including `.process`) are downgraded to `manual` hints — SPM package resources land in the package's own bundle, so only the artifact that ships the app bundle needs the seed. Pure-SPM projects keep the strict behavior.
+- `airstrings doctor` now detects Bazel workspaces rooted above the project: `MODULE.bazel`, `WORKSPACE`, and `WORKSPACE.bazel` markers are also looked up in up to 3 parent directories of the project root. The BUILD-file content scan stays bounded to the project tree.
+
 ## [0.5.0] - 2026-06-11
 
 ### Changed

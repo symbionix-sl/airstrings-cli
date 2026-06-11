@@ -97,6 +97,7 @@ Local workspace for AI-friendly string management. Initialized via `airstrings i
 ```
 .airstrings/                  # Created by `airstrings init` in project root
   config.json                 # Workspace config (credentials, project, active env)
+  doctor.json                 # Ignored doctor checks (optional, written by doctor's interactive prompt)
   strings.csv                 # Unsectioned strings (flat mode)
   home/home.csv               # Section "home" strings
   login/login.csv             # Section "login" strings
