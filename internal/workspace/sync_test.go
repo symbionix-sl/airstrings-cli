@@ -28,7 +28,7 @@ type testAPI struct {
 func newTestAPI() *testAPI {
 	api := &testAPI{
 		imported: make(map[string]map[string]string),
-		mux:     http.NewServeMux(),
+		mux:      http.NewServeMux(),
 	}
 	api.mux.HandleFunc("/v1/projects/proj/environments/env/sections", api.handleSections)
 	api.mux.HandleFunc("/v1/projects/proj/environments/env/strings/", api.handleStringByKey)

@@ -120,6 +120,73 @@ func TestLoadConfig_OldFormat(t *testing.T) {
 	}
 }
 
+func TestSaveConfig_RoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	cfg := WorkspaceConfig{
+		ProjectID: "p1",
+		ActiveEnv: "e1",
+		Credentials: []Credential{
+			{APIKey: "key1", EnvID: "e1", EnvName: "prod"},
+		},
+	}
+	if err := Init(dir, cfg); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	wsDir := filepath.Join(dir, ".airstrings")
+
+	cfg.Credentials[0].APIKey = "key2"
+	if err := SaveConfig(wsDir, &cfg); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	loaded, err := LoadConfig(wsDir)
+	if err != nil {
+		t.Fatalf("failed to load config: %v", err)
+	}
+	if loaded.Credentials[0].APIKey != "key2" {
+		t.Errorf("expected key2, got %q", loaded.Credentials[0].APIKey)
+	}
+}
+
+func TestSaveConfig_AtomicAndPermissions(t *testing.T) {
+	dir := t.TempDir()
+	if err := Init(dir, WorkspaceConfig{ProjectID: "p1", ActiveEnv: "e1"}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	wsDir := filepath.Join(dir, ".airstrings")
+
+	cfg := &WorkspaceConfig{ProjectID: "p1", ActiveEnv: "e2"}
+	if err := SaveConfig(wsDir, cfg); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	info, err := os.Stat(filepath.Join(wsDir, "config.json"))
+	if err != nil {
+		t.Fatalf("config.json missing: %v", err)
+	}
+	if perm := info.Mode().Perm(); perm != 0600 {
+		t.Errorf("expected 0600 file permissions, got %o", perm)
+	}
+
+	entries, err := os.ReadDir(wsDir)
+	if err != nil {
+		t.Fatalf("read dir: %v", err)
+	}
+	for _, e := range entries {
+		if e.Name() != "config.json" {
+			t.Errorf("unexpected leftover file: %s", e.Name())
+		}
+	}
+
+	loaded, err := LoadConfig(wsDir)
+	if err != nil {
+		t.Fatalf("failed to load config: %v", err)
+	}
+	if loaded.ActiveEnv != "e2" {
+		t.Errorf("expected e2, got %q", loaded.ActiveEnv)
+	}
+}
+
 func TestLoadConfig_MissingFile(t *testing.T) {
 	_, err := LoadConfig("/nonexistent/.airstrings")
 	if err == nil {

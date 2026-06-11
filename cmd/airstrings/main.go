@@ -55,6 +55,8 @@ func main() {
 		handleEnv(args)
 	case "envs": // backward compat
 		handleEnv(args)
+	case "apikey":
+		handleAPIKey(args)
 	case "strings":
 		handleStrings(args)
 	case "sections":
@@ -108,6 +110,9 @@ Navigation:
   env rm <name>                         Remove environment credentials
   -e -u <env-name>                      Switch environment (shorthand)
   locales                               List locales with string counts
+
+API keys:
+  apikey rotate [--env <name>]          Rotate the workspace API key
 
 Strings:
   strings list [--locale <loc>] [--section <id>] [--limit <n>]
@@ -482,6 +487,71 @@ func handleEnv(args []string) {
 		rows = append(rows, []string{e.ID, e.Name, def, sealed, active})
 	}
 	output.Table(headers, rows)
+}
+
+// --- API key commands ---
+
+func handleAPIKey(args []string) {
+	if len(args) == 0 || args[0] != "rotate" {
+		output.Errorf("usage: airstrings apikey rotate [--env <name>]")
+	}
+	handleAPIKeyRotate(args[1:])
+}
+
+func handleAPIKeyRotate(args []string) {
+	envName := ""
+	for i := 0; i < len(args); i++ {
+		if args[i] == "--env" {
+			i++
+			if i < len(args) {
+				envName = args[i]
+			}
+		}
+	}
+
+	wsDir, wsCfg := mustWorkspace()
+
+	var cred *workspace.Credential
+	if envName != "" {
+		for i := range wsCfg.Credentials {
+			if strings.EqualFold(wsCfg.Credentials[i].EnvName, envName) {
+				cred = &wsCfg.Credentials[i]
+				break
+			}
+		}
+		if cred == nil {
+			output.Errorf("environment %q not found", envName)
+		}
+	} else {
+		var err error
+		cred, err = wsCfg.ActiveCredential()
+		if err != nil {
+			output.Errorf("%s", err)
+		}
+	}
+
+	result, err := workspace.RotateKey(wsDir, wsCfg, cred)
+	if err != nil {
+		output.Errorf("rotate key: %s", err)
+	}
+
+	if !result.Revoked {
+		fmt.Fprintf(os.Stderr, "WARNING: failed to revoke old key %s (%s) — it is still active and must be revoked manually via the dashboard or DELETE /api-keys/%s\n",
+			result.OldKeyID, result.RevokeErr, result.OldKeyID)
+	}
+
+	if output.JSONMode {
+		output.JSON(result)
+		return
+	}
+
+	key := cred.APIKey
+	masked := key[:8] + "..." + key[len(key)-4:]
+	if result.Revoked {
+		output.Success(fmt.Sprintf("Rotated API key for %s — new key %s (old key %s revoked)", cred.EnvName, masked, result.OldKeyID))
+	} else {
+		output.Success(fmt.Sprintf("Rotated API key for %s — new key %s", cred.EnvName, masked))
+	}
 }
 
 // --- String commands ---
@@ -1155,8 +1225,8 @@ func handleLocalLs(args []string) {
 }
 
 type localRow struct {
-	Section string         `json:"section"`
-	Row     workspace.Row  `json:"row"`
+	Section string        `json:"section"`
+	Row     workspace.Row `json:"row"`
 }
 
 func handlePush(args []string) {

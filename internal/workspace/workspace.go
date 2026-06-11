@@ -165,8 +165,22 @@ func SaveConfig(wsDir string, cfg *WorkspaceConfig) error {
 	if err != nil {
 		return fmt.Errorf("marshal workspace config: %w", err)
 	}
-	cfgPath := filepath.Join(wsDir, ConfigFile)
-	if err := os.WriteFile(cfgPath, data, 0600); err != nil {
+	tmp, err := os.CreateTemp(wsDir, ConfigFile+".tmp-*")
+	if err != nil {
+		return fmt.Errorf("write workspace config: %w", err)
+	}
+	tmpPath := tmp.Name()
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		os.Remove(tmpPath)
+		return fmt.Errorf("write workspace config: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("write workspace config: %w", err)
+	}
+	if err := os.Rename(tmpPath, filepath.Join(wsDir, ConfigFile)); err != nil {
+		os.Remove(tmpPath)
 		return fmt.Errorf("write workspace config: %w", err)
 	}
 	return nil
