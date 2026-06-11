@@ -32,7 +32,7 @@ internal/
   workspace/                # Workspace management (.airstrings/ folder)
     csv.go                  # Pure CSV read/write/edit operations
     workspace.go            # Init, Find, LoadConfig, credentials, ResolveClient
-    sync.go                 # Push/pull (bridges local CSVs and API client)
+    sync.go                 # Push/pull + single-key push helpers (bridges local CSVs and API client)
 ```
 
 All command handlers live in `main.go`. No command framework — plain `switch` on `os.Args`. This is intentional; do not introduce cobra, urfave/cli, or similar.
@@ -57,6 +57,8 @@ Every command follows the same structure:
 3. Call one client method
 4. Output: `--json` → `output.JSON(v)`, otherwise formatted text or `output.Table()`
 5. Errors: `output.Errorf("verb noun: %s", err)`
+
+Local-first commands (`strings set/rm`) skip step 2 unless `--push` is given — `mustClient()` is called per-subcommand, never upfront, so offline mutations need only a workspace, not credentials.
 
 When adding a new command:
 1. Add the case to the `switch` in `main()`
@@ -101,8 +103,10 @@ Local workspace for AI-friendly string management. Initialized via `airstrings i
 ```
 
 - `init <api-key>` creates workspace with credentials and section dirs
-- `local set/rm/ls` manipulate CSVs locally without API calls
-- `push` upserts all local strings to API via `UpsertString` per key (creates sections remotely if needed)
+- `strings set/rm` manipulate CSVs locally without API calls; `--push` also syncs that single key to the API immediately (`workspace.PushKey`/`PushKeyRemoval`: upsert via `UpsertString` — creating the section remotely if needed — full-key removal via `DeleteString`, locale-only removal via nil-value upsert)
+- `strings create`/`strings delete` are aliases of `strings set`/`strings rm`
+- `local set/rm/ls` are deprecated aliases: `set`/`rm` forward to the `strings` handlers, `ls` keeps its own listing implementation; all print a one-line warning to stderr
+- `push` uploads all local strings to API in bulk via the import endpoint (creates sections remotely if needed)
 - `pull` downloads all remote strings into organized CSVs (overwrites local state)
 - Workspace is found by walking up from cwd (like `.git`). `workspace.Find()` handles this
 - CSV format: `key,locale,value,format` — one row per key+locale pair

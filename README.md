@@ -64,13 +64,17 @@ airstrings locales                  # List locales with string counts
 
 ### Strings
 
+`strings set` and `strings rm` are local-first: they edit the workspace CSVs and never call the API unless `--push` is given. `strings create` and `strings delete` are aliases of `set` and `rm`.
+
 ```bash
-airstrings strings list                          # List all strings
+airstrings strings list                          # List all strings (remote)
 airstrings strings list --locale en --limit 50   # Filter by locale
-airstrings strings get welcome.title             # Get a single string
-airstrings strings create app.name en="My App" es="Mi App" --format text
-airstrings strings set welcome.title en="Hello" es="Hola"
-airstrings strings delete old.unused.key
+airstrings strings get welcome.title             # Get a single string (remote)
+airstrings strings set welcome.title en="Hello" es="Hola"            # Write to local CSVs
+airstrings strings set app.name en="My App" --format text --push     # Also upsert to the API
+airstrings strings rm old.unused.key             # Remove from local CSVs
+airstrings strings rm old.unused.key --push      # Also delete from the API
+airstrings strings rm welcome.title --locale es --push   # Remove one locale, locally and remotely
 ```
 
 ### Sections
@@ -129,25 +133,30 @@ The workspace workflow lets you manage strings locally and sync with the API. Th
 airstrings init ask_live_xxxxxxxxxxxx
 
 # Add strings locally (no API calls)
-airstrings local set onboarding.welcome en="Welcome!" it="Benvenuto!" --section onboarding
-airstrings local set onboarding.welcome de="Willkommen!" es="¡Bienvenido!" fr="Bienvenue!" --section onboarding
-airstrings local set app.tagline en="The best app" it="La migliore app" --format text
+airstrings strings set onboarding.welcome en="Welcome!" it="Benvenuto!" --section onboarding
+airstrings strings set onboarding.welcome de="Willkommen!" es="¡Bienvenido!" fr="Bienvenue!" --section onboarding
+airstrings strings set app.tagline en="The best app" it="La migliore app" --format text
 
 # List local strings
 airstrings local ls
 airstrings local ls --section onboarding
 
 # Edit and remove
-airstrings local set onboarding.welcome en="Welcome to the app!" --section onboarding
-airstrings local rm old.key --section onboarding
+airstrings strings set onboarding.welcome en="Welcome to the app!" --section onboarding
+airstrings strings rm old.key --section onboarding
 
-# Push to AirStrings
+# Sync a single key immediately while editing
+airstrings strings set app.tagline en="The best app" --push
+
+# Push everything to AirStrings
 airstrings push
 airstrings push --section onboarding   # push single section
 
 # Pull remote strings to local
 airstrings pull
 ```
+
+The old `local set`, `local rm`, and `local ls` commands are deprecated aliases — they still work but print a warning to stderr.
 
 The `airstrings init` command creates a `.airstrings/` folder in your project root:
 
