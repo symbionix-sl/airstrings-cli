@@ -21,14 +21,19 @@ type testAPI struct {
 	sections []client.Section
 	strings  []client.StringEntry
 	// imported tracks keys received via the import endpoint
-	imported map[string]map[string]string // key -> locale -> value
-	mux      *http.ServeMux
+	imported       map[string]map[string]string // key -> locale -> value
+	upserts        map[string]client.UpsertStringRequest
+	deleted        []string
+	sectionAssigns map[string]string // key -> section ID
+	mux            *http.ServeMux
 }
 
 func newTestAPI() *testAPI {
 	api := &testAPI{
-		imported: make(map[string]map[string]string),
-		mux:      http.NewServeMux(),
+		imported:       make(map[string]map[string]string),
+		upserts:        make(map[string]client.UpsertStringRequest),
+		sectionAssigns: make(map[string]string),
+		mux:            http.NewServeMux(),
 	}
 	api.mux.HandleFunc("/v1/projects/proj/environments/env/sections", api.handleSections)
 	api.mux.HandleFunc("/v1/projects/proj/environments/env/strings/", api.handleStringByKey)
@@ -71,8 +76,32 @@ func (a *testAPI) handleStrings(w http.ResponseWriter, r *http.Request) {
 
 func (a *testAPI) handleStringByKey(w http.ResponseWriter, r *http.Request) {
 	if filepath.Base(r.URL.Path) == "section" {
+		key := filepath.Base(filepath.Dir(r.URL.Path))
+		var req client.AssignSectionRequest
+		json.NewDecoder(r.Body).Decode(&req)
+		if req.SectionID != nil {
+			a.sectionAssigns[key] = *req.SectionID
+		}
 		w.WriteHeader(http.StatusNoContent)
 		return
+	}
+
+	key := filepath.Base(r.URL.Path)
+	switch r.Method {
+	case "PUT":
+		var req client.UpsertStringRequest
+		json.NewDecoder(r.Body).Decode(&req)
+		a.upserts[key] = req
+		entry := client.StringEntry{Key: key, Format: req.Format, Values: make(map[string]string)}
+		for loc, v := range req.Values {
+			if v != nil {
+				entry.Values[loc] = *v
+			}
+		}
+		json.NewEncoder(w).Encode(entry)
+	case "DELETE":
+		a.deleted = append(a.deleted, key)
+		w.WriteHeader(http.StatusNoContent)
 	}
 }
 
@@ -367,6 +396,168 @@ func TestPull_EmptyProject(t *testing.T) {
 	}
 	if result.FileCount != 0 {
 		t.Errorf("expected 0 files, got %d", result.FileCount)
+	}
+}
+
+func TestPushKey_UpsertsValuesAndFormat(t *testing.T) {
+	api := newTestAPI()
+	srv := api.server()
+	defer srv.Close()
+
+	c := client.New("key", srv.URL, "proj", "env")
+
+	err := PushKey(c, "greeting", map[string]string{"en": "Hello", "it": "Ciao"}, "icu", "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	req, ok := api.upserts["greeting"]
+	if !ok {
+		t.Fatal("expected PUT upsert for 'greeting'")
+	}
+	if req.Format != "icu" {
+		t.Errorf("expected format 'icu', got %q", req.Format)
+	}
+	if len(req.Values) != 2 {
+		t.Fatalf("expected 2 values, got %d", len(req.Values))
+	}
+	if req.Values["en"] == nil || *req.Values["en"] != "Hello" {
+		t.Errorf("expected en=Hello, got %v", req.Values["en"])
+	}
+	if req.Values["it"] == nil || *req.Values["it"] != "Ciao" {
+		t.Errorf("expected it=Ciao, got %v", req.Values["it"])
+	}
+	if len(api.sectionAssigns) != 0 {
+		t.Errorf("expected no section assignment, got %v", api.sectionAssigns)
+	}
+}
+
+func TestPushKey_CreatesSectionWhenMissing(t *testing.T) {
+	api := newTestAPI()
+	srv := api.server()
+	defer srv.Close()
+
+	c := client.New("key", srv.URL, "proj", "env")
+
+	err := PushKey(c, "welcome", map[string]string{"en": "Welcome"}, "text", "home")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(api.sections) != 1 || api.sections[0].Name != "home" {
+		t.Fatalf("expected section 'home' created, got %v", api.sections)
+	}
+	if api.sectionAssigns["welcome"] != "sec-home" {
+		t.Errorf("expected 'welcome' assigned to 'sec-home', got %q", api.sectionAssigns["welcome"])
+	}
+}
+
+func TestPushKey_ReusesExistingSection(t *testing.T) {
+	api := newTestAPI()
+	api.sections = []client.Section{
+		{ID: "sec-existing", Name: "home"},
+	}
+	srv := api.server()
+	defer srv.Close()
+
+	c := client.New("key", srv.URL, "proj", "env")
+
+	err := PushKey(c, "welcome", map[string]string{"en": "Welcome"}, "text", "home")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(api.sections) != 1 {
+		t.Fatalf("expected no new section, got %v", api.sections)
+	}
+	if api.sectionAssigns["welcome"] != "sec-existing" {
+		t.Errorf("expected 'welcome' assigned to 'sec-existing', got %q", api.sectionAssigns["welcome"])
+	}
+}
+
+func TestPushKeyRemoval_FullKey(t *testing.T) {
+	api := newTestAPI()
+	srv := api.server()
+	defer srv.Close()
+
+	c := client.New("key", srv.URL, "proj", "env")
+
+	if err := PushKeyRemoval(c, "old.key", ""); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(api.deleted) != 1 || api.deleted[0] != "old.key" {
+		t.Errorf("expected DELETE for 'old.key', got %v", api.deleted)
+	}
+	if len(api.upserts) != 0 {
+		t.Errorf("expected no upserts, got %v", api.upserts)
+	}
+}
+
+func TestPushKeyRemoval_SingleLocale(t *testing.T) {
+	api := newTestAPI()
+	srv := api.server()
+	defer srv.Close()
+
+	c := client.New("key", srv.URL, "proj", "env")
+
+	if err := PushKeyRemoval(c, "greeting", "it"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(api.deleted) != 0 {
+		t.Errorf("expected no deletes, got %v", api.deleted)
+	}
+	req, ok := api.upserts["greeting"]
+	if !ok {
+		t.Fatal("expected PUT upsert for 'greeting'")
+	}
+	v, present := req.Values["it"]
+	if !present {
+		t.Fatal("expected 'it' locale in upsert values")
+	}
+	if v != nil {
+		t.Errorf("expected nil value for 'it', got %q", *v)
+	}
+}
+
+func TestSetThenPushKey_WritesCSVAndPushes(t *testing.T) {
+	api := newTestAPI()
+	srv := api.server()
+	defer srv.Close()
+
+	c := client.New("key", srv.URL, "proj", "env")
+
+	dir := t.TempDir()
+	wsDir := filepath.Join(dir, ".airstrings")
+
+	values := map[string]string{"en": "Welcome", "it": "Benvenuto"}
+	path := CSVPath(wsDir, "home")
+	if err := SetRows(path, "welcome", values, "text"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if err := PushKey(c, "welcome", values, "text", "home"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	rows, err := ReadCSV(path)
+	if err != nil {
+		t.Fatalf("read CSV error: %v", err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("expected 2 rows, got %d", len(rows))
+	}
+	for _, r := range rows {
+		if r.Key != "welcome" || r.Format != "text" {
+			t.Errorf("unexpected row: %+v", r)
+		}
+	}
+
+	if _, ok := api.upserts["welcome"]; !ok {
+		t.Error("expected PUT upsert for 'welcome'")
+	}
+	if api.sectionAssigns["welcome"] != "sec-home" {
+		t.Errorf("expected 'welcome' assigned to 'sec-home', got %q", api.sectionAssigns["welcome"])
 	}
 }
 

@@ -121,9 +121,12 @@ API keys:
 Strings:
   strings list [--locale <loc>] [--section <id>] [--limit <n>]
   strings get <key>
-  strings set <key> <locale>=<value> [<locale>=<value>...]
-  strings create <key> <locale>=<value> [--format text|icu] [--section <id>]
-  strings delete <key>
+  strings set <key> <locale>=<value>... [--format text|icu] [--section <name>] [--push]
+                          Write to local CSVs; --push also upserts the key to the API
+  strings rm <key> [--locale <loc>] [--section <name>] [--push]
+                          Remove from local CSVs; --push also removes from the API
+  strings create          Alias of strings set
+  strings delete          Alias of strings rm
 
 Sections:
   sections list
@@ -145,9 +148,8 @@ Import:
   import status <id>      Check import status
 
 Workspace:
-  local set <key> <locale>=<value> [--format text|icu] [--section <name>]
-  local rm <key> [--locale <loc>] [--section <name>]
-  local ls [--section <name>]                      List local strings
+  local ls [--section <name>]                      List local strings (deprecated)
+  local set / local rm                             Deprecated — use strings set / strings rm
   push [--section <name>]                          Push local strings to API
   pull [--section <name>]                          Pull remote draft strings to local
                                                    CSVs (published bundles: bundles pull)
@@ -572,31 +574,18 @@ func handleStrings(args []string) {
 		args = []string{"list"}
 	}
 
-	c := mustClient()
-
 	switch args[0] {
 	case "list", "ls":
-		handleStringList(c, args[1:])
+		handleStringList(mustClient(), args[1:])
 	case "get":
 		if len(args) < 2 {
 			output.Errorf("usage: airstrings strings get <key>")
 		}
-		handleStringGet(c, args[1])
-	case "set":
-		if len(args) < 3 {
-			output.Errorf("usage: airstrings strings set <key> <locale>=<value> ...")
-		}
-		handleStringSet(c, args[1], args[2:])
-	case "create":
-		if len(args) < 3 {
-			output.Errorf("usage: airstrings strings create <key> <locale>=<value> [--format text|icu]")
-		}
-		handleStringCreate(c, args[1], args[2:])
-	case "delete", "rm":
-		if len(args) < 2 {
-			output.Errorf("usage: airstrings strings delete <key>")
-		}
-		handleStringDelete(c, args[1])
+		handleStringGet(mustClient(), args[1])
+	case "set", "create":
+		handleStringSet(args[1:])
+	case "rm", "delete":
+		handleStringRm(args[1:])
 	default:
 		output.Errorf("unknown strings command: %s", args[0])
 	}
@@ -686,74 +675,148 @@ func handleStringGet(c *client.Client, key string) {
 	}
 }
 
-func handleStringSet(c *client.Client, key string, pairs []string) {
-	values := make(map[string]*string)
-	for _, pair := range pairs {
-		parts := strings.SplitN(pair, "=", 2)
-		if len(parts) != 2 {
-			output.Errorf("invalid format %q — expected locale=value", pair)
-		}
-		v := parts[1]
-		values[parts[0]] = &v
+func handleStringSet(args []string) {
+	if len(args) < 2 {
+		output.Errorf("usage: airstrings strings set <key> <locale>=<value> [--format text|icu] [--section <name>] [--push]")
 	}
 
-	s, err := c.UpsertString(key, client.UpsertStringRequest{Values: values})
-	if err != nil {
-		output.Errorf("set string: %s", err)
-	}
+	key := args[0]
+	format := "text"
+	section := ""
+	push := false
+	values := make(map[string]string)
 
-	if output.JSONMode {
-		output.JSON(s)
-		return
-	}
-
-	output.Success(fmt.Sprintf("Updated %s (%d locales)", s.Key, len(s.Values)))
-}
-
-func handleStringCreate(c *client.Client, key string, args []string) {
-	req := client.CreateStringRequest{
-		Key:    key,
-		Values: make(map[string]string),
-	}
-
-	for i := 0; i < len(args); i++ {
+	for i := 1; i < len(args); i++ {
 		switch args[i] {
 		case "--format":
 			i++
 			if i < len(args) {
-				req.Format = args[i]
+				format = args[i]
 			}
 		case "--section":
 			i++
 			if i < len(args) {
-				req.SectionID = &args[i]
+				section = args[i]
 			}
+		case "--push":
+			push = true
 		default:
 			parts := strings.SplitN(args[i], "=", 2)
 			if len(parts) == 2 {
-				req.Values[parts[0]] = parts[1]
+				values[parts[0]] = parts[1]
+			} else {
+				output.Errorf("invalid format %q — expected locale=value", args[i])
 			}
 		}
 	}
 
-	s, err := c.CreateString(req)
+	if len(values) == 0 {
+		output.Errorf("at least one locale=value pair is required")
+	}
+
+	wsDir, err := workspace.Find()
 	if err != nil {
-		output.Errorf("create string: %s", err)
+		output.Errorf("%s", err)
+	}
+
+	if section != "" {
+		if err := workspace.ValidateSectionName(section); err != nil {
+			output.Errorf("%s", err)
+		}
+	}
+
+	path := workspace.CSVPath(wsDir, section)
+	if err := workspace.SetRows(path, key, values, format); err != nil {
+		output.Errorf("set rows: %s", err)
+	}
+
+	if push {
+		c := mustClient()
+		if err := workspace.PushKey(c, key, values, format, section); err != nil {
+			output.Errorf("push %s: %s", key, err)
+		}
 	}
 
 	if output.JSONMode {
-		output.JSON(s)
+		output.JSON(map[string]any{
+			"key":     key,
+			"locales": len(values),
+			"section": section,
+			"format":  format,
+			"pushed":  push,
+		})
 		return
 	}
 
-	output.Success(fmt.Sprintf("Created %s (%d locales)", s.Key, len(s.Values)))
+	msg := fmt.Sprintf("Set %s — %d locale(s) [%s]", key, len(values), format)
+	if section != "" {
+		msg += " in " + section
+	}
+	if push {
+		msg += " (pushed)"
+	}
+	output.Success(msg)
 }
 
-func handleStringDelete(c *client.Client, key string) {
-	if err := c.DeleteString(key); err != nil {
-		output.Errorf("delete string: %s", err)
+func handleStringRm(args []string) {
+	if len(args) < 1 {
+		output.Errorf("usage: airstrings strings rm <key> [--locale <loc>] [--section <name>] [--push]")
 	}
-	output.Success(fmt.Sprintf("Deleted %s", key))
+
+	key := args[0]
+	locale := ""
+	section := ""
+	push := false
+
+	for i := 1; i < len(args); i++ {
+		switch args[i] {
+		case "--locale":
+			i++
+			if i < len(args) {
+				locale = args[i]
+			}
+		case "--section":
+			i++
+			if i < len(args) {
+				section = args[i]
+			}
+		case "--push":
+			push = true
+		}
+	}
+
+	wsDir, err := workspace.Find()
+	if err != nil {
+		output.Errorf("%s", err)
+	}
+
+	path := workspace.CSVPath(wsDir, section)
+	if err := workspace.RemoveRows(path, key, locale); err != nil {
+		output.Errorf("remove rows: %s", err)
+	}
+
+	if push {
+		c := mustClient()
+		if err := workspace.PushKeyRemoval(c, key, locale); err != nil {
+			output.Errorf("push removal %s: %s", key, err)
+		}
+	}
+
+	if output.JSONMode {
+		output.JSON(map[string]any{"key": key, "locale": locale, "section": section, "pushed": push})
+		return
+	}
+
+	var msg string
+	if locale != "" {
+		msg = fmt.Sprintf("Removed %s/%s", key, locale)
+	} else {
+		msg = fmt.Sprintf("Removed %s (all locales)", key)
+	}
+	if push {
+		msg += " (pushed)"
+	}
+	output.Success(msg)
 }
 
 // --- Section commands ---
@@ -1189,130 +1252,25 @@ func handleLocal(args []string) {
 
 	switch args[0] {
 	case "set":
-		handleLocalSet(args[1:])
+		warnDeprecated("local set", "strings set")
+		handleStringSet(args[1:])
 	case "rm", "remove":
-		handleLocalRm(args[1:])
+		warnDeprecated("local rm", "strings rm")
+		handleStringRm(args[1:])
 	case "ls", "list":
+		warnDeprecated("local ls", "")
 		handleLocalLs(args[1:])
 	default:
 		output.Errorf("unknown local command: %s", args[0])
 	}
 }
 
-func handleLocalSet(args []string) {
-	if len(args) < 2 {
-		output.Errorf("usage: airstrings local set <key> <locale>=<value> [--format text|icu] [--section <name>]")
-	}
-
-	key := args[0]
-	format := "text"
-	section := ""
-	values := make(map[string]string)
-
-	for i := 1; i < len(args); i++ {
-		switch args[i] {
-		case "--format":
-			i++
-			if i < len(args) {
-				format = args[i]
-			}
-		case "--section":
-			i++
-			if i < len(args) {
-				section = args[i]
-			}
-		default:
-			parts := strings.SplitN(args[i], "=", 2)
-			if len(parts) == 2 {
-				values[parts[0]] = parts[1]
-			} else {
-				output.Errorf("invalid format %q — expected locale=value", args[i])
-			}
-		}
-	}
-
-	if len(values) == 0 {
-		output.Errorf("at least one locale=value pair is required")
-	}
-
-	wsDir, err := workspace.Find()
-	if err != nil {
-		output.Errorf("%s", err)
-	}
-
-	if section != "" {
-		if err := workspace.ValidateSectionName(section); err != nil {
-			output.Errorf("%s", err)
-		}
-	}
-
-	path := workspace.CSVPath(wsDir, section)
-	if err := workspace.SetRows(path, key, values, format); err != nil {
-		output.Errorf("set rows: %s", err)
-	}
-
-	if output.JSONMode {
-		output.JSON(map[string]any{
-			"key":     key,
-			"locales": len(values),
-			"section": section,
-			"format":  format,
-		})
+func warnDeprecated(old, replacement string) {
+	if replacement == "" {
+		fmt.Fprintf(os.Stderr, "warning: '%s' is deprecated\n", old)
 		return
 	}
-
-	loc := fmt.Sprintf("%d locale(s)", len(values))
-	if section != "" {
-		output.Success(fmt.Sprintf("Set %s — %s [%s] in %s", key, loc, format, section))
-	} else {
-		output.Success(fmt.Sprintf("Set %s — %s [%s]", key, loc, format))
-	}
-}
-
-func handleLocalRm(args []string) {
-	if len(args) < 1 {
-		output.Errorf("usage: airstrings local rm <key> [--locale <loc>] [--section <name>]")
-	}
-
-	key := args[0]
-	locale := ""
-	section := ""
-
-	for i := 1; i < len(args); i++ {
-		switch args[i] {
-		case "--locale":
-			i++
-			if i < len(args) {
-				locale = args[i]
-			}
-		case "--section":
-			i++
-			if i < len(args) {
-				section = args[i]
-			}
-		}
-	}
-
-	wsDir, err := workspace.Find()
-	if err != nil {
-		output.Errorf("%s", err)
-	}
-
-	path := workspace.CSVPath(wsDir, section)
-	if err := workspace.RemoveRows(path, key, locale); err != nil {
-		output.Errorf("remove rows: %s", err)
-	}
-
-	if output.JSONMode {
-		output.JSON(map[string]any{"key": key, "locale": locale, "section": section})
-		return
-	}
-
-	if locale != "" {
-		output.Success(fmt.Sprintf("Removed %s/%s", key, locale))
-	} else {
-		output.Success(fmt.Sprintf("Removed %s (all locales)", key))
-	}
+	fmt.Fprintf(os.Stderr, "warning: '%s' is deprecated, use '%s'\n", old, replacement)
 }
 
 func handleLocalLs(args []string) {

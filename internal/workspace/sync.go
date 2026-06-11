@@ -252,6 +252,39 @@ func Pull(c *client.Client, wsDir, section string) (*PullResult, error) {
 	return result, nil
 }
 
+// PushKey upserts a single key's values to the API.
+// If section is non-empty, the section is created remotely if missing
+// and the key is assigned to it.
+func PushKey(c *client.Client, key string, values map[string]string, format, section string) error {
+	vals := make(map[string]*string, len(values))
+	for loc, v := range values {
+		vals[loc] = &v
+	}
+	if _, err := c.UpsertString(key, client.UpsertStringRequest{Format: format, Values: vals}); err != nil {
+		return err
+	}
+	if section != "" {
+		secID, err := EnsureSection(c, section)
+		if err != nil {
+			return err
+		}
+		if err := c.AssignSection(key, client.AssignSectionRequest{SectionID: &secID}); err != nil {
+			return fmt.Errorf("assign section %q: %w", section, err)
+		}
+	}
+	return nil
+}
+
+// PushKeyRemoval mirrors a local removal to the API.
+// Empty locale deletes the whole key; otherwise only that locale's value is removed.
+func PushKeyRemoval(c *client.Client, key, locale string) error {
+	if locale == "" {
+		return c.DeleteString(key)
+	}
+	_, err := c.UpsertString(key, client.UpsertStringRequest{Values: map[string]*string{locale: nil}})
+	return err
+}
+
 // EnsureSection finds a section by name or creates it. Returns the section ID.
 func EnsureSection(c *client.Client, name string) (string, error) {
 	sections, err := c.ListSections()
