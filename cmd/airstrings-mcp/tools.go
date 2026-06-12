@@ -76,21 +76,6 @@ var toolDefs = []ToolDef{
 		InputSchema: stringsLsSchema,
 	},
 	{
-		Name:        "airstrings_local_set",
-		Description: stringsSetDescription + " (deprecated, use airstrings_strings_set)",
-		InputSchema: stringsSetSchema,
-	},
-	{
-		Name:        "airstrings_local_rm",
-		Description: stringsRmDescription + " (deprecated, use airstrings_strings_rm)",
-		InputSchema: stringsRmSchema,
-	},
-	{
-		Name:        "airstrings_local_ls",
-		Description: stringsLsDescription + " (deprecated, use airstrings_strings_ls)",
-		InputSchema: stringsLsSchema,
-	},
-	{
 		Name:        "airstrings_push",
 		Description: "Push local workspace strings to the AirStrings API. Upserts each key with its locale values. Creates sections remotely if they don't exist.",
 		InputSchema: InputSchema{
@@ -129,9 +114,6 @@ var toolHandlers = map[string]toolHandler{
 	"airstrings_strings_set": handleToolStringsSet,
 	"airstrings_strings_rm":  handleToolStringsRm,
 	"airstrings_strings_ls":  handleToolStringsLs,
-	"airstrings_local_set":   handleToolStringsSet,
-	"airstrings_local_rm":    handleToolStringsRm,
-	"airstrings_local_ls":    handleToolStringsLs,
 	"airstrings_push":        handleToolPush,
 	"airstrings_pull":        handleToolPull,
 	"airstrings_publish":     handleToolPublish,

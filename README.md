@@ -158,8 +158,6 @@ airstrings push --section onboarding   # push single section
 airstrings pull
 ```
 
-The old `local set`, `local rm`, and `local ls` commands are deprecated aliases — they still work but print a warning to stderr. `local ls` is replaced by `strings ls --local`.
-
 The `airstrings init` command creates a `.airstrings/` folder in your project root:
 
 ```
@@ -219,8 +217,6 @@ Instead of generating CSV files, the AI calls structured MCP tools -- one call p
 | `airstrings_push` | Push local strings to API |
 | `airstrings_pull` | Pull remote strings to local |
 | `airstrings_publish` | Publish bundles to CDN |
-
-The former `airstrings_local_set/rm/ls` names still work as deprecated aliases and will be removed in a future minor release.
 
 ### JSON Output
 

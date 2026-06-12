@@ -106,8 +106,7 @@ Local workspace for AI-friendly string management. Initialized via `airstrings i
 - `init <api-key>` creates workspace with credentials and section dirs
 - `strings set/rm` manipulate CSVs locally without API calls; `--push` also syncs that single key to the API immediately (`workspace.PushKey`/`PushKeyRemoval`: upsert via `UpsertString` — creating the section remotely if needed — full-key removal via `DeleteString`, locale-only removal via nil-value upsert)
 - `strings create`/`strings delete` are aliases of `strings set`/`strings rm`
-- `strings ls --local` lists local workspace strings offline (no client constructed); the non-deprecated replacement for `local ls`. Shares `listLocalStrings` with the deprecated `local ls` handler
-- `local set/rm/ls` are deprecated aliases: `set`/`rm` forward to the `strings` handlers, `ls` keeps its own listing implementation; all print a one-line warning to stderr
+- `strings ls --local` lists local workspace strings offline (no client constructed); reads workspace CSVs via `listLocalStrings`
 - `push` uploads all local strings to API in bulk via the import endpoint (creates sections remotely if needed)
 - `pull` downloads all remote strings into organized CSVs (overwrites local state)
 - Workspace is found by walking up from cwd (like `.git`). `workspace.Find()` handles this
@@ -130,7 +129,7 @@ Configure in Claude Desktop or any MCP client:
 }
 ```
 
-Tools: `airstrings_init`, `airstrings_strings_set`, `airstrings_strings_rm`, `airstrings_strings_ls`, `airstrings_push`, `airstrings_pull`, `airstrings_publish`. `airstrings_strings_set`/`airstrings_strings_rm` accept an optional boolean `push` mirroring the CLI `--push` flag (syncs that single key to the API after the local write). The old `airstrings_local_set/rm/ls` names remain registered as deprecated aliases of the same handlers.
+Tools: `airstrings_init`, `airstrings_strings_set`, `airstrings_strings_rm`, `airstrings_strings_ls`, `airstrings_push`, `airstrings_pull`, `airstrings_publish`. `airstrings_strings_set`/`airstrings_strings_rm` accept an optional boolean `push` mirroring the CLI `--push` flag (syncs that single key to the API after the local write).
 
 ## Non-Negotiables
 

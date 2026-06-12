@@ -75,8 +75,6 @@ func main() {
 		handleImport(args)
 	case "init":
 		handleInit(args)
-	case "local":
-		handleLocal(args)
 	case "push":
 		handlePush(args)
 	case "pull":
@@ -151,8 +149,6 @@ Import:
   import status <id>      Check import status
 
 Workspace:
-  local ls [--section <name>]                      List local strings (deprecated)
-  local set / local rm                             Deprecated — use strings set / strings rm
   push [--section <name>]                          Push local strings to API
   pull [--section <name>]                          Pull remote draft strings to local
                                                    CSVs (published bundles: bundles pull)
@@ -1292,34 +1288,6 @@ func handleInit(args []string) {
 	}
 }
 
-func handleLocal(args []string) {
-	if len(args) == 0 {
-		output.Errorf("usage: airstrings local <set|rm|ls> ...")
-	}
-
-	switch args[0] {
-	case "set":
-		warnDeprecated("local set", "strings set")
-		handleStringSet(args[1:])
-	case "rm", "remove":
-		warnDeprecated("local rm", "strings rm")
-		handleStringRm(args[1:])
-	case "ls", "list":
-		warnDeprecated("local ls", "")
-		handleLocalLs(args[1:])
-	default:
-		output.Errorf("unknown local command: %s", args[0])
-	}
-}
-
-func warnDeprecated(old, replacement string) {
-	if replacement == "" {
-		fmt.Fprintf(os.Stderr, "warning: '%s' is deprecated\n", old)
-		return
-	}
-	fmt.Fprintf(os.Stderr, "warning: '%s' is deprecated, use '%s'\n", old, replacement)
-}
-
 func hasFlag(args []string, flag string) bool {
 	for _, a := range args {
 		if a == flag {
@@ -1327,10 +1295,6 @@ func hasFlag(args []string, flag string) bool {
 		}
 	}
 	return false
-}
-
-func handleLocalLs(args []string) {
-	listLocalStrings(args)
 }
 
 func listLocalStrings(args []string) {

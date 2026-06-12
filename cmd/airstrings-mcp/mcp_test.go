@@ -104,18 +104,9 @@ func TestMCP_ToolsList(t *testing.T) {
 		"airstrings_strings_set": false,
 		"airstrings_strings_rm":  false,
 		"airstrings_strings_ls":  false,
-		"airstrings_local_set":   false,
-		"airstrings_local_rm":    false,
-		"airstrings_local_ls":    false,
 		"airstrings_push":        false,
 		"airstrings_pull":        false,
 		"airstrings_publish":     false,
-	}
-
-	deprecatedNotes := map[string]string{
-		"airstrings_local_set": "(deprecated, use airstrings_strings_set)",
-		"airstrings_local_rm":  "(deprecated, use airstrings_strings_rm)",
-		"airstrings_local_ls":  "(deprecated, use airstrings_strings_ls)",
 	}
 
 	for _, tool := range toolsList.Tools {
@@ -128,11 +119,7 @@ func TestMCP_ToolsList(t *testing.T) {
 		if tool.InputSchema.Type != "object" {
 			t.Errorf("tool %q has wrong schema type: %q", tool.Name, tool.InputSchema.Type)
 		}
-		if note, ok := deprecatedNotes[tool.Name]; ok {
-			if !strings.Contains(tool.Description, note) {
-				t.Errorf("tool %q description missing deprecation note %q: %q", tool.Name, note, tool.Description)
-			}
-		} else if strings.Contains(tool.Description, "deprecated") {
+		if strings.Contains(tool.Description, "deprecated") {
 			t.Errorf("tool %q unexpectedly marked deprecated: %q", tool.Name, tool.Description)
 		}
 		if tool.Name == "airstrings_strings_set" || tool.Name == "airstrings_strings_rm" {
@@ -614,51 +601,6 @@ func setupPushWorkspace(t *testing.T, baseURL string) string {
 	os.Chdir(dir)
 	t.Cleanup(func() { os.Chdir(origDir) })
 	return filepath.Join(dir, ".airstrings")
-}
-
-func TestMCP_ToolCall_DeprecatedLocalAliases(t *testing.T) {
-	dir := t.TempDir()
-	wsDir := filepath.Join(dir, ".airstrings")
-	workspace.Init(dir, workspace.WorkspaceConfig{
-		ProjectID: "p", ActiveEnv: "e",
-	})
-
-	origDir, _ := os.Getwd()
-	os.Chdir(dir)
-	defer os.Chdir(origDir)
-
-	server := &MCPServer{}
-
-	result := callTool(t, server, 11, "airstrings_local_set", map[string]any{
-		"key":    "greeting",
-		"values": `{"en": "Hello", "it": "Ciao"}`,
-	})
-	if result.IsError {
-		t.Fatalf("local_set alias error: %s", result.Content[0].Text)
-	}
-
-	result = callTool(t, server, 12, "airstrings_local_ls", map[string]any{})
-	if result.IsError {
-		t.Fatalf("local_ls alias error: %s", result.Content[0].Text)
-	}
-	var entries []struct{ Key string }
-	json.Unmarshal([]byte(result.Content[0].Text), &entries)
-	if len(entries) != 2 {
-		t.Errorf("expected 2 entries, got %d", len(entries))
-	}
-
-	result = callTool(t, server, 13, "airstrings_local_rm", map[string]any{
-		"key":    "greeting",
-		"locale": "it",
-	})
-	if result.IsError {
-		t.Fatalf("local_rm alias error: %s", result.Content[0].Text)
-	}
-
-	rows, _ := workspace.ReadCSV(workspace.CSVPath(wsDir, ""))
-	if len(rows) != 1 {
-		t.Errorf("expected 1 row after alias rm, got %d", len(rows))
-	}
 }
 
 func TestMCP_ToolCall_StringsSetPush(t *testing.T) {
