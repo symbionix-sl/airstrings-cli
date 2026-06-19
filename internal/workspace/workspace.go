@@ -197,6 +197,76 @@ func ResolveClient(wsCfg *WorkspaceConfig) (*client.Client, error) {
 	return client.New(cred.APIKey, cred.BaseURL, wsCfg.ProjectID, wsCfg.ActiveEnv), nil
 }
 
+// EnvAuth holds credentials sourced from environment variables.
+type EnvAuth struct {
+	APIKey    string
+	BaseURL   string
+	ProjectID string
+	EnvID     string
+}
+
+// EnvAuthFromEnv reads AIRSTRINGS_* variables. The bool is false when
+// AIRSTRINGS_API_KEY is unset (no env-based auth requested).
+func EnvAuthFromEnv() (EnvAuth, bool) {
+	key := os.Getenv("AIRSTRINGS_API_KEY")
+	if key == "" {
+		return EnvAuth{}, false
+	}
+	return EnvAuth{
+		APIKey:    key,
+		BaseURL:   os.Getenv("AIRSTRINGS_BASE_URL"),
+		ProjectID: os.Getenv("AIRSTRINGS_PROJECT_ID"),
+		EnvID:     os.Getenv("AIRSTRINGS_ENV_ID"),
+	}, true
+}
+
+// ClientFromEnv builds an API client from AIRSTRINGS_* environment variables,
+// overriding any on-disk workspace. The second return is false when
+// AIRSTRINGS_API_KEY is unset. When set but project/env are not provided, they
+// are resolved from the key in one or two API calls (Mode B); supplying
+// AIRSTRINGS_PROJECT_ID and AIRSTRINGS_ENV_ID skips discovery entirely (Mode A).
+func ClientFromEnv() (*client.Client, bool, error) {
+	env, ok := EnvAuthFromEnv()
+	if !ok {
+		return nil, false, nil
+	}
+
+	projectID, envID := env.ProjectID, env.EnvID
+
+	if projectID == "" {
+		proj, err := client.New(env.APIKey, env.BaseURL, "", "").GetProject()
+		if err != nil {
+			return nil, true, fmt.Errorf("resolve project from AIRSTRINGS_API_KEY: %w", err)
+		}
+		projectID = proj.ID
+	}
+
+	if envID == "" {
+		envs, err := client.New(env.APIKey, env.BaseURL, projectID, "").ListEnvironments()
+		if err != nil {
+			return nil, true, fmt.Errorf("resolve environment from AIRSTRINGS_API_KEY: %w", err)
+		}
+		envID = defaultEnvID(envs)
+		if envID == "" {
+			return nil, true, fmt.Errorf("no environments found for this key — set AIRSTRINGS_ENV_ID")
+		}
+	}
+
+	return client.New(env.APIKey, env.BaseURL, projectID, envID), true, nil
+}
+
+func defaultEnvID(envs []client.Environment) string {
+	for _, e := range envs {
+		if e.IsDefault {
+			return e.ID
+		}
+	}
+	if len(envs) > 0 {
+		return envs[0].ID
+	}
+	return ""
+}
+
 // DetectMode returns the workspace mode based on what files exist:
 // "sections" if any section subdirectories with CSVs exist,
 // "flat" if only strings.csv exists,

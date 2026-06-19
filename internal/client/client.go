@@ -59,6 +59,28 @@ func (e *APIError) Error() string {
 	return fmt.Sprintf("API error %d", e.StatusCode)
 }
 
+// ExitCode maps an HTTP status to a CLI exit code so scripts and agents can
+// branch on the failure class. Values mirror internal/output exit codes.
+func (e *APIError) ExitCode() int {
+	switch e.StatusCode {
+	case 401, 403:
+		return 3 // auth
+	case 404:
+		return 4 // not found
+	case 429:
+		return 6 // rate limited
+	default:
+		return 1
+	}
+}
+
+// NetworkError wraps a transport-level failure (connection refused, DNS,
+// timeout) — distinct from an HTTP error response.
+type NetworkError struct{ Err error }
+
+func (e *NetworkError) Error() string { return e.Err.Error() }
+func (e *NetworkError) Unwrap() error { return e.Err }
+
 type ErrorResponse struct {
 	Error ErrorBody `json:"error"`
 }
@@ -102,13 +124,13 @@ func (c *Client) do(method, path string, query url.Values, body any, result any)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("request failed: %w", err)
+		return &NetworkError{fmt.Errorf("request to %s failed: %w", c.baseURL, err)}
 	}
 	defer resp.Body.Close()
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return fmt.Errorf("read response: %w", err)
+		return &NetworkError{fmt.Errorf("read response: %w", err)}
 	}
 
 	ct := resp.Header.Get("Content-Type")
@@ -182,13 +204,13 @@ func (c *Client) doMultipart(path string, fields map[string]string, fileName str
 
 	resp, err := uploadClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("request failed: %w", err)
+		return &NetworkError{fmt.Errorf("request to %s failed: %w", c.baseURL, err)}
 	}
 	defer resp.Body.Close()
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return fmt.Errorf("read response: %w", err)
+		return &NetworkError{fmt.Errorf("read response: %w", err)}
 	}
 
 	ct := resp.Header.Get("Content-Type")

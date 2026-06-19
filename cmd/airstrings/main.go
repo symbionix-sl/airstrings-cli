@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -90,7 +91,7 @@ func main() {
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown command: %s\n\n", cmd)
 		printUsage()
-		os.Exit(1)
+		os.Exit(2)
 	}
 }
 
@@ -117,9 +118,12 @@ API keys:
   apikey rotate [--env <name>]          Rotate the workspace API key
 
 Strings:
-  strings ls [--local] [--section <name>] [--locale <loc>] [--limit <n>]
+  strings ls [--local] [--section <name>] [--locale <loc>]
+             [--limit <n>] [--cursor <c>] [--key-prefix <p>]
                           List strings (remote by default); --local reads the
-                          workspace CSVs offline (no credentials needed)
+                          workspace CSVs offline (no credentials needed).
+                          --limit/--cursor page results; --json includes
+                          pagination.next_cursor for the next page
   strings get <key>
   strings set <key> <locale>=<value>... --format text|icu [--section <name>] [--push]
                           Write to local CSVs; --push also upserts the key to the API
@@ -160,6 +164,18 @@ MCP:
 Flags:
   --json                  Output as JSON (works with any command)
 
+Environment variables (headless / CI — no 'init' needed):
+  AIRSTRINGS_API_KEY      Scoped API key; overrides the workspace credential.
+                          Project and default environment are resolved from the
+                          key automatically.
+  AIRSTRINGS_PROJECT_ID   Skip project resolution (one fewer API call)
+  AIRSTRINGS_ENV_ID       Skip environment resolution
+  AIRSTRINGS_BASE_URL     API base URL (default https://api.airstrings.com)
+  NO_COLOR                Disable colored output
+
+Exit codes:
+  0 ok   1 error   2 usage   3 auth   4 not-found   5 network   6 rate-limited
+
 `)
 }
 
@@ -176,14 +192,53 @@ func mustWorkspace() (string, *workspace.WorkspaceConfig) {
 	return wsDir, wsCfg
 }
 
-// mustClient loads workspace config and returns a ready API client.
+// mustClient returns a ready API client. AIRSTRINGS_API_KEY (env-var auth)
+// takes precedence over the on-disk workspace; otherwise the active workspace
+// credential is used.
 func mustClient() *client.Client {
+	if c, ok, err := workspace.ClientFromEnv(); ok {
+		if err != nil {
+			failAPI("resolve credentials from environment", err)
+		}
+		return c
+	}
 	_, wsCfg := mustWorkspace()
 	c, err := workspace.ResolveClient(wsCfg)
 	if err != nil {
 		output.Errorf("%s", err)
 	}
 	return c
+}
+
+// clientFor returns a client for a command that has already loaded a workspace
+// (push/pull/bundles pull). Env-var auth still wins over the workspace credential.
+func clientFor(wsCfg *workspace.WorkspaceConfig) *client.Client {
+	if c, ok, err := workspace.ClientFromEnv(); ok {
+		if err != nil {
+			failAPI("resolve credentials from environment", err)
+		}
+		return c
+	}
+	c, err := workspace.ResolveClient(wsCfg)
+	if err != nil {
+		output.Errorf("%s", err)
+	}
+	return c
+}
+
+// failAPI exits with an error code reflecting the failure class (auth, not
+// found, network, rate-limited) so scripts and agents can branch on it.
+func failAPI(verb string, err error) {
+	code := output.ExitGeneric
+	var apiErr *client.APIError
+	var netErr *client.NetworkError
+	switch {
+	case errors.As(err, &apiErr):
+		code = apiErr.ExitCode()
+	case errors.As(err, &netErr):
+		code = output.ExitNetwork
+	}
+	output.Fail(code, "%s: %s", verb, err)
 }
 
 // handleShorthandFlags processes -e -u <name> flags.
@@ -222,7 +277,7 @@ func handleShorthandFlags(args []string) bool {
 	}
 
 	// No command after flags — print status
-	printStatus(wsCfg)
+	printStatus(wsDir, wsCfg)
 	return true
 }
 
@@ -250,31 +305,81 @@ func switchEnv(wsCfg *workspace.WorkspaceConfig, name string) {
 	output.Errorf("environment %q not found. Available: %s", name, strings.Join(names, ", "))
 }
 
-func printStatus(wsCfg *workspace.WorkspaceConfig) {
+func printStatus(wsDir string, wsCfg *workspace.WorkspaceConfig) {
 	cred, err := wsCfg.ActiveCredential()
 	if err != nil {
 		output.Errorf("%s", err)
 	}
 
+	url := cred.BaseURL
+	if url == "" {
+		url = "https://api.airstrings.com"
+	}
+
 	if output.JSONMode {
-		output.JSON(map[string]string{
-			"project_id":   wsCfg.ProjectID,
-			"project_name": wsCfg.ProjectName,
-			"env_id":       cred.EnvID,
-			"env_name":     cred.EnvName,
-			"base_url":     cred.BaseURL,
+		envs := make([]map[string]any, 0, len(wsCfg.Credentials))
+		for _, c := range wsCfg.Credentials {
+			envs = append(envs, map[string]any{
+				"env_id":   c.EnvID,
+				"env_name": c.EnvName,
+				"active":   c.EnvID == wsCfg.ActiveEnv,
+			})
+		}
+		output.JSON(map[string]any{
+			"source":        "workspace",
+			"workspace_dir": wsDir,
+			"mode":          workspace.DetectMode(wsDir),
+			"project_id":    wsCfg.ProjectID,
+			"project_name":  wsCfg.ProjectName,
+			"env_id":        cred.EnvID,
+			"env_name":      cred.EnvName,
+			"base_url":      url,
+			"environments":  envs,
 		})
 		return
 	}
 
 	fmt.Printf("Project:  %s (%s)\n", wsCfg.ProjectName, wsCfg.ProjectID)
 	fmt.Printf("Env:      %s (%s)\n", cred.EnvName, cred.EnvID)
-	url := cred.BaseURL
-	if url == "" {
-		url = "https://api.airstrings.com"
-	}
 	fmt.Printf("API URL:  %s\n", url)
 	fmt.Printf("Key:      %s...%s\n", cred.APIKey[:8], cred.APIKey[len(cred.APIKey)-4:])
+}
+
+// printEnvStatus reports the credentials sourced from AIRSTRINGS_* env vars.
+// It stays offline: unresolved project/env are shown as resolved-on-first-call.
+func printEnvStatus(env workspace.EnvAuth) {
+	base := env.BaseURL
+	if base == "" {
+		base = "https://api.airstrings.com"
+	}
+	masked := env.APIKey
+	if len(masked) > 12 {
+		masked = masked[:8] + "..." + masked[len(masked)-4:]
+	}
+
+	if output.JSONMode {
+		output.JSON(map[string]any{
+			"source":     "env",
+			"project_id": env.ProjectID,
+			"env_id":     env.EnvID,
+			"base_url":   base,
+		})
+		return
+	}
+
+	projectID := env.ProjectID
+	if projectID == "" {
+		projectID = "(resolved from key on first call)"
+	}
+	envID := env.EnvID
+	if envID == "" {
+		envID = "(default env, resolved from key)"
+	}
+	fmt.Printf("Source:   environment (AIRSTRINGS_API_KEY)\n")
+	fmt.Printf("Project:  %s\n", projectID)
+	fmt.Printf("Env:      %s\n", envID)
+	fmt.Printf("API URL:  %s\n", base)
+	fmt.Printf("Key:      %s\n", masked)
 }
 
 // --- Auth commands ---
@@ -282,7 +387,7 @@ func printStatus(wsCfg *workspace.WorkspaceConfig) {
 // parseKeyAndURL extracts an API key and optional --url/--base-url from args.
 func parseKeyAndURL(args []string) (string, string) {
 	if len(args) < 1 {
-		output.Errorf("usage: provide an API key")
+		output.Fail(output.ExitUsage, "usage: provide an API key")
 	}
 	apiKey := args[0]
 	var baseURL string
@@ -303,13 +408,13 @@ func validateAndDiscover(apiKey, baseURL string) (*client.Project, []client.Envi
 	c := client.New(apiKey, baseURL, "", "")
 	proj, err := c.GetProject()
 	if err != nil {
-		output.Errorf("invalid API key: %s", err)
+		failAPI("invalid API key", err)
 	}
 
 	c2 := client.New(apiKey, baseURL, proj.ID, "")
 	envs, err := c2.ListEnvironments()
 	if err != nil {
-		output.Errorf("list environments: %s", err)
+		failAPI("list environments", err)
 	}
 	return proj, envs
 }
@@ -340,8 +445,12 @@ func addCredentials(wsCfg *workspace.WorkspaceConfig, apiKey, baseURL string, en
 }
 
 func handleStatus(args []string) {
-	_, wsCfg := mustWorkspace()
-	printStatus(wsCfg)
+	if env, ok := workspace.EnvAuthFromEnv(); ok {
+		printEnvStatus(env)
+		return
+	}
+	wsDir, wsCfg := mustWorkspace()
+	printStatus(wsDir, wsCfg)
 }
 
 // --- Project commands ---
@@ -354,7 +463,7 @@ func handleProject(args []string) {
 	c := mustClient()
 	proj, err := c.GetProject()
 	if err != nil {
-		output.Errorf("get project: %s", err)
+		failAPI("get project", err)
 	}
 
 	if output.JSONMode {
@@ -377,7 +486,7 @@ func handleProject(args []string) {
 func handleEnv(args []string) {
 	if len(args) > 0 && args[0] == "use" {
 		if len(args) < 2 {
-			output.Errorf("usage: airstrings env use <name>")
+			output.Fail(output.ExitUsage, "usage: airstrings env use <name>")
 		}
 		wsDir, wsCfg := mustWorkspace()
 		switchEnv(wsCfg, args[1])
@@ -385,13 +494,17 @@ func handleEnv(args []string) {
 			output.Errorf("save workspace: %s", err)
 		}
 		cred, _ := wsCfg.ActiveCredential()
+		if output.JSONMode {
+			output.JSON(map[string]any{"active_env": cred.EnvName, "env_id": cred.EnvID, "project": wsCfg.ProjectName})
+			return
+		}
 		output.Success(fmt.Sprintf("Switched to %s / %s", wsCfg.ProjectName, cred.EnvName))
 		return
 	}
 
 	if len(args) > 0 && args[0] == "add" {
 		if len(args) < 2 {
-			output.Errorf("usage: airstrings env add <api-key> [--url <base-url>]")
+			output.Fail(output.ExitUsage, "usage: airstrings env add <api-key> [--url <base-url>]")
 		}
 		apiKey, baseURL := parseKeyAndURL(args[1:])
 		wsDir, wsCfg := mustWorkspace()
@@ -402,6 +515,15 @@ func handleEnv(args []string) {
 
 		if err := workspace.SaveConfig(wsDir, wsCfg); err != nil {
 			output.Errorf("save workspace: %s", err)
+		}
+
+		if output.JSONMode {
+			names := make([]string, 0, len(envs))
+			for _, env := range envs {
+				names = append(names, env.Name)
+			}
+			output.JSON(map[string]any{"added": len(envs), "environments": names, "active_env": activeEnvName})
+			return
 		}
 
 		output.Success(fmt.Sprintf("Added %d environment(s): %s", len(envs), activeEnvName))
@@ -417,7 +539,7 @@ func handleEnv(args []string) {
 
 	if len(args) > 0 && args[0] == "rm" {
 		if len(args) < 2 {
-			output.Errorf("usage: airstrings env rm <name>")
+			output.Fail(output.ExitUsage, "usage: airstrings env rm <name>")
 		}
 		wsDir, wsCfg := mustWorkspace()
 
@@ -449,6 +571,10 @@ func handleEnv(args []string) {
 			output.Errorf("save workspace: %s", err)
 		}
 
+		if output.JSONMode {
+			output.JSON(map[string]any{"removed": name})
+			return
+		}
 		output.Success(fmt.Sprintf("Removed %s", name))
 		return
 	}
@@ -456,11 +582,15 @@ func handleEnv(args []string) {
 	if len(args) > 0 && args[0] == "create" {
 		c := mustClient()
 		if len(args) < 2 {
-			output.Errorf("usage: airstrings env create <name>")
+			output.Fail(output.ExitUsage, "usage: airstrings env create <name>")
 		}
 		env, err := c.CreateEnvironment(client.CreateEnvRequest{Name: args[1]})
 		if err != nil {
-			output.Errorf("create environment: %s", err)
+			failAPI("create environment", err)
+		}
+		if output.JSONMode {
+			output.JSON(map[string]any{"created": true, "env_id": env.ID, "env_name": env.Name})
+			return
 		}
 		output.Success(fmt.Sprintf("Environment %q created (id: %s)", env.Name, env.ID))
 		return
@@ -469,7 +599,7 @@ func handleEnv(args []string) {
 	c := mustClient()
 	envs, err := c.ListEnvironments()
 	if err != nil {
-		output.Errorf("list environments: %s", err)
+		failAPI("list environments", err)
 	}
 
 	_, wsCfg := mustWorkspace()
@@ -503,7 +633,7 @@ func handleEnv(args []string) {
 
 func handleAPIKey(args []string) {
 	if len(args) == 0 || args[0] != "rotate" {
-		output.Errorf("usage: airstrings apikey rotate [--env <name>]")
+		output.Fail(output.ExitUsage, "usage: airstrings apikey rotate [--env <name>]")
 	}
 	handleAPIKeyRotate(args[1:])
 }
@@ -542,7 +672,7 @@ func handleAPIKeyRotate(args []string) {
 
 	result, err := workspace.RotateKey(wsDir, wsCfg, cred)
 	if err != nil {
-		output.Errorf("rotate key: %s", err)
+		failAPI("rotate key", err)
 	}
 
 	if !result.Revoked {
@@ -580,7 +710,7 @@ func handleStrings(args []string) {
 		handleStringList(mustClient(), args[1:])
 	case "get":
 		if len(args) < 2 {
-			output.Errorf("usage: airstrings strings get <key>")
+			output.Fail(output.ExitUsage, "usage: airstrings strings get <key>")
 		}
 		handleStringGet(mustClient(), args[1])
 	case "set":
@@ -588,12 +718,13 @@ func handleStrings(args []string) {
 	case "rm":
 		handleStringRm(args[1:])
 	default:
-		output.Errorf("unknown strings command: %s", args[0])
+		output.Fail(output.ExitUsage, "unknown strings command: %s", args[0])
 	}
 }
 
 func handleStringList(c *client.Client, args []string) {
 	opts := client.ListStringsOpts{}
+	keyPrefix := ""
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--locale":
@@ -611,29 +742,57 @@ func handleStringList(c *client.Client, args []string) {
 			if i < len(args) {
 				fmt.Sscanf(args[i], "%d", &opts.Limit)
 			}
+		case "--cursor":
+			i++
+			if i < len(args) {
+				opts.Cursor = args[i]
+			}
+		case "--key-prefix":
+			i++
+			if i < len(args) {
+				keyPrefix = args[i]
+			}
 		}
 	}
 
 	var entries []client.StringEntry
-	var hasMore bool
+	var page client.PaginationMeta
 
-	if opts.Limit > 0 {
+	// A limit (or an explicit cursor) requests a single bounded page; otherwise
+	// page through everything. Bounded paging keeps output small for agents.
+	if opts.Limit > 0 || opts.Cursor != "" {
 		list, err := c.ListStrings(opts)
 		if err != nil {
-			output.Errorf("list strings: %s", err)
+			failAPI("list strings", err)
 		}
 		entries = list.Data
-		hasMore = list.Pagination.HasMore
+		page = list.Pagination
 	} else {
 		all, err := c.ListAllStrings(opts)
 		if err != nil {
-			output.Errorf("list strings: %s", err)
+			failAPI("list strings", err)
 		}
 		entries = all
 	}
 
+	if keyPrefix != "" {
+		filtered := entries[:0]
+		for _, s := range entries {
+			if strings.HasPrefix(s.Key, keyPrefix) {
+				filtered = append(filtered, s)
+			}
+		}
+		entries = filtered
+	}
+
 	if output.JSONMode {
-		output.JSON(entries)
+		output.JSON(map[string]any{
+			"data": entries,
+			"pagination": map[string]any{
+				"has_more":    page.HasMore,
+				"next_cursor": page.NextCursor,
+			},
+		})
 		return
 	}
 
@@ -652,15 +811,19 @@ func handleStringList(c *client.Client, args []string) {
 	}
 	output.Table(headers, rows)
 
-	if hasMore {
-		fmt.Printf("\n(more results available)\n")
+	if page.HasMore {
+		if page.NextCursor != "" {
+			fmt.Printf("\n(more results — next: airstrings strings ls --cursor %s)\n", page.NextCursor)
+		} else {
+			fmt.Printf("\n(more results available)\n")
+		}
 	}
 }
 
 func handleStringGet(c *client.Client, key string) {
 	s, err := c.GetString(key)
 	if err != nil {
-		output.Errorf("get string: %s", err)
+		failAPI("get string", err)
 	}
 
 	if output.JSONMode {
@@ -678,7 +841,7 @@ func handleStringGet(c *client.Client, key string) {
 
 func handleStringSet(args []string) {
 	if len(args) < 2 {
-		output.Errorf("usage: airstrings strings set <key> <locale>=<value> --format text|icu [--section <name>] [--push]")
+		output.Fail(output.ExitUsage, "usage: airstrings strings set <key> <locale>=<value> --format text|icu [--section <name>] [--push]")
 	}
 
 	key := args[0]
@@ -706,17 +869,17 @@ func handleStringSet(args []string) {
 			if len(parts) == 2 {
 				values[parts[0]] = parts[1]
 			} else {
-				output.Errorf("invalid format %q — expected locale=value", args[i])
+				output.Fail(output.ExitUsage, "invalid format %q — expected locale=value", args[i])
 			}
 		}
 	}
 
 	if len(values) == 0 {
-		output.Errorf("at least one locale=value pair is required")
+		output.Fail(output.ExitUsage, "at least one locale=value pair is required")
 	}
 
 	if format == "" {
-		output.Errorf("--format is required — must be 'text' or 'icu'")
+		output.Fail(output.ExitUsage, "--format is required — must be 'text' or 'icu'")
 	}
 	if err := workspace.ValidateFormat(format); err != nil {
 		output.Errorf("%s", err)
@@ -747,7 +910,7 @@ func handleStringSet(args []string) {
 	if push {
 		c := mustClient()
 		if err := workspace.PushKey(c, key, values, format, section); err != nil {
-			output.Errorf("push %s: %s", key, err)
+			failAPI(fmt.Sprintf("push %s", key), err)
 		}
 	}
 
@@ -778,7 +941,7 @@ func handleStringSet(args []string) {
 
 func handleStringRm(args []string) {
 	if len(args) < 1 {
-		output.Errorf("usage: airstrings strings rm <key> [--locale <loc>] [--section <name>] [--push]")
+		output.Fail(output.ExitUsage, "usage: airstrings strings rm <key> [--locale <loc>] [--section <name>] [--push]")
 	}
 
 	key := args[0]
@@ -816,7 +979,7 @@ func handleStringRm(args []string) {
 	if push {
 		c := mustClient()
 		if err := workspace.PushKeyRemoval(c, key, locale); err != nil {
-			output.Errorf("push removal %s: %s", key, err)
+			failAPI(fmt.Sprintf("push removal %s", key), err)
 		}
 	}
 
@@ -850,7 +1013,7 @@ func handleSections(args []string) {
 	case "list", "ls":
 		list, err := c.ListSections()
 		if err != nil {
-			output.Errorf("list sections: %s", err)
+			failAPI("list sections", err)
 		}
 
 		if output.JSONMode {
@@ -871,7 +1034,7 @@ func handleSections(args []string) {
 
 	case "create":
 		if len(args) < 2 {
-			output.Errorf("usage: airstrings sections create <name> [--description <desc>]")
+			output.Fail(output.ExitUsage, "usage: airstrings sections create <name> [--description <desc>]")
 		}
 		req := client.CreateSectionRequest{Name: args[1]}
 		for i := 2; i < len(args); i++ {
@@ -884,21 +1047,29 @@ func handleSections(args []string) {
 		}
 		sec, err := c.CreateSection(req)
 		if err != nil {
-			output.Errorf("create section: %s", err)
+			failAPI("create section", err)
+		}
+		if output.JSONMode {
+			output.JSON(map[string]any{"created": true, "section_id": sec.ID, "name": sec.Name})
+			return
 		}
 		output.Success(fmt.Sprintf("Section %q created (id: %s)", sec.Name, sec.ID))
 
 	case "delete", "rm":
 		if len(args) < 2 {
-			output.Errorf("usage: airstrings sections delete <id>")
+			output.Fail(output.ExitUsage, "usage: airstrings sections delete <id>")
 		}
 		if err := c.DeleteSection(args[1]); err != nil {
-			output.Errorf("delete section: %s", err)
+			failAPI("delete section", err)
+		}
+		if output.JSONMode {
+			output.JSON(map[string]any{"deleted": args[1]})
+			return
 		}
 		output.Success(fmt.Sprintf("Section %s deleted", args[1]))
 
 	default:
-		output.Errorf("unknown sections command: %s", args[0])
+		output.Fail(output.ExitUsage, "unknown sections command: %s", args[0])
 	}
 }
 
@@ -914,7 +1085,7 @@ func handleBundles(args []string) {
 
 	bundles, err := c.ListBundles()
 	if err != nil {
-		output.Errorf("list bundles: %s", err)
+		failAPI("list bundles", err)
 	}
 
 	if output.JSONMode {
@@ -951,10 +1122,10 @@ func handleBundlesPull(args []string) {
 			}
 		default:
 			if strings.HasPrefix(args[i], "-") {
-				output.Errorf("unknown flag: %s", args[i])
+				output.Fail(output.ExitUsage, "unknown flag: %s", args[i])
 			}
 			if dirArg != "" {
-				output.Errorf("usage: airstrings bundles pull [dir] [--locale <bcp47>]")
+				output.Fail(output.ExitUsage, "usage: airstrings bundles pull [dir] [--locale <bcp47>]")
 			}
 			dirArg = args[i]
 		}
@@ -966,23 +1137,20 @@ func handleBundlesPull(args []string) {
 		output.Errorf("%s", err)
 	}
 
-	c, err := workspace.ResolveClient(wsCfg)
-	if err != nil {
-		output.Errorf("%s", err)
-	}
-	cred, err := wsCfg.ActiveCredential()
-	if err != nil {
-		output.Errorf("%s", err)
+	c := clientFor(wsCfg)
+	envName := ""
+	if cred, err := wsCfg.ActiveCredential(); err == nil {
+		envName = cred.EnvName
 	}
 
 	res, err := bundlepull.Pull(c, bundlepull.Options{
 		Dir:        dir,
 		Locale:     locale,
-		EnvName:    cred.EnvName,
+		EnvName:    envName,
 		CLIVersion: version,
 	})
 	if err != nil {
-		output.Errorf("bundles pull: %s", err)
+		failAPI("bundles pull", err)
 	}
 
 	if res.FirstPull {
@@ -1022,10 +1190,10 @@ func handleDoctor(args []string) {
 			continue
 		}
 		if strings.HasPrefix(a, "-") {
-			output.Errorf("unknown flag: %s", a)
+			output.Fail(output.ExitUsage, "unknown flag: %s", a)
 		}
 		if dirArg != "" {
-			output.Errorf("usage: airstrings doctor [dir] [--no-input]")
+			output.Fail(output.ExitUsage, "usage: airstrings doctor [dir] [--no-input]")
 		}
 		dirArg = a
 	}
@@ -1127,7 +1295,7 @@ func handlePublish(args []string) {
 
 	resp, err := c.PublishBundles(locales)
 	if err != nil {
-		output.Errorf("publish: %s", err)
+		failAPI("publish", err)
 	}
 
 	if output.JSONMode {
@@ -1153,7 +1321,7 @@ func handleLocales(args []string) {
 
 	locales, err := c.ListLocales()
 	if err != nil {
-		output.Errorf("list locales: %s", err)
+		failAPI("list locales", err)
 	}
 
 	if output.JSONMode {
@@ -1175,13 +1343,13 @@ func handleImport(args []string) {
 	c := mustClient()
 
 	if len(args) == 0 {
-		output.Errorf("usage: airstrings import csv <file> | airstrings import status <id>")
+		output.Fail(output.ExitUsage, "usage: airstrings import csv <file> | airstrings import status <id>")
 	}
 
 	switch args[0] {
 	case "csv":
 		if len(args) < 2 {
-			output.Errorf("usage: airstrings import csv <file>")
+			output.Fail(output.ExitUsage, "usage: airstrings import csv <file>")
 		}
 		data, err := os.ReadFile(args[1])
 		if err != nil {
@@ -1189,7 +1357,7 @@ func handleImport(args []string) {
 		}
 		status, err := c.CreateImport(data, nil)
 		if err != nil {
-			output.Errorf("import: %s", err)
+			failAPI("import", err)
 		}
 		if output.JSONMode {
 			output.JSON(status)
@@ -1199,11 +1367,11 @@ func handleImport(args []string) {
 
 	case "status":
 		if len(args) < 2 {
-			output.Errorf("usage: airstrings import status <id>")
+			output.Fail(output.ExitUsage, "usage: airstrings import status <id>")
 		}
 		status, err := c.GetImport(args[1])
 		if err != nil {
-			output.Errorf("get import: %s", err)
+			failAPI("get import", err)
 		}
 		if output.JSONMode {
 			output.JSON(status)
@@ -1214,7 +1382,7 @@ func handleImport(args []string) {
 			status.CreatedRows, status.UpdatedRows, status.SkippedRows, len(status.Errors))
 
 	default:
-		output.Errorf("unknown import command: %s", args[0])
+		output.Fail(output.ExitUsage, "unknown import command: %s", args[0])
 	}
 }
 
@@ -1222,7 +1390,7 @@ func handleImport(args []string) {
 
 func handleInit(args []string) {
 	if len(args) < 1 {
-		output.Errorf("usage: airstrings init <api-key> [--url <base-url>] [--purge]")
+		output.Fail(output.ExitUsage, "usage: airstrings init <api-key> [--url <base-url>] [--purge]")
 	}
 
 	// Parse --purge flag before passing to parseKeyAndURL
@@ -1407,10 +1575,7 @@ func handlePush(args []string) {
 		output.Errorf("%s", err)
 	}
 
-	c, err := workspace.ResolveClient(wsCfg)
-	if err != nil {
-		output.Errorf("%s", err)
-	}
+	c := clientFor(wsCfg)
 
 	var progress workspace.ProgressFunc
 	if !output.JSONMode {
@@ -1429,7 +1594,7 @@ func handlePush(args []string) {
 		if progress != nil {
 			fmt.Fprint(os.Stderr, "\r\033[K") // clear progress line
 		}
-		output.Errorf("push: %s", err)
+		failAPI("push", err)
 	}
 
 	if progress != nil {
@@ -1474,10 +1639,7 @@ func handlePull(args []string) {
 		output.Errorf("%s", err)
 	}
 
-	c, err := workspace.ResolveClient(wsCfg)
-	if err != nil {
-		output.Errorf("%s", err)
-	}
+	c := clientFor(wsCfg)
 
 	// Warn about overwrite
 	paths, _ := workspace.AllCSVPaths(wsDir)
@@ -1487,7 +1649,7 @@ func handlePull(args []string) {
 
 	result, err := workspace.Pull(c, wsDir, section)
 	if err != nil {
-		output.Errorf("pull: %s", err)
+		failAPI("pull", err)
 	}
 
 	if output.JSONMode {
@@ -1505,7 +1667,7 @@ func handlePull(args []string) {
 
 func handleMCP(args []string) {
 	if len(args) == 0 {
-		output.Errorf("usage: airstrings mcp <install|uninstall|status>")
+		output.Fail(output.ExitUsage, "usage: airstrings mcp <install|uninstall|status>")
 	}
 
 	switch args[0] {
@@ -1528,7 +1690,7 @@ func handleMCP(args []string) {
 	case "status":
 		handleMCPStatus()
 	default:
-		output.Errorf("unknown mcp command: %s", args[0])
+		output.Fail(output.ExitUsage, "unknown mcp command: %s", args[0])
 	}
 }
 
@@ -1690,16 +1852,6 @@ func uninstallMCPDesktop() {
 func handleMCPStatus() {
 	mcpBin, binErr := findMCPBinary()
 
-	fmt.Println("AirStrings MCP Status")
-	fmt.Println()
-
-	// Binary
-	if binErr != nil {
-		fmt.Println("  Binary:         not found")
-	} else {
-		fmt.Printf("  Binary:         %s\n", mcpBin)
-	}
-
 	// Claude Code — check via `claude mcp list`
 	ccInstalled := false
 	if claudeBin, err := exec.LookPath("claude"); err == nil {
@@ -1707,11 +1859,6 @@ func handleMCPStatus() {
 		if err == nil && strings.Contains(string(out), "airstrings") {
 			ccInstalled = true
 		}
-	}
-	if ccInstalled {
-		fmt.Println("  Claude Code:    installed")
-	} else {
-		fmt.Println("  Claude Code:    not installed")
 	}
 
 	// Claude Desktop — check config file
@@ -1725,6 +1872,33 @@ func handleMCPStatus() {
 				cdInstalled = true
 			}
 		}
+	}
+
+	if output.JSONMode {
+		bin := ""
+		if binErr == nil {
+			bin = mcpBin
+		}
+		output.JSON(map[string]any{
+			"binary":         bin,
+			"binary_found":   binErr == nil,
+			"claude_code":    ccInstalled,
+			"claude_desktop": cdInstalled,
+		})
+		return
+	}
+
+	fmt.Println("AirStrings MCP Status")
+	fmt.Println()
+	if binErr != nil {
+		fmt.Println("  Binary:         not found")
+	} else {
+		fmt.Printf("  Binary:         %s\n", mcpBin)
+	}
+	if ccInstalled {
+		fmt.Println("  Claude Code:    installed")
+	} else {
+		fmt.Println("  Claude Code:    not installed")
 	}
 	if cdInstalled {
 		fmt.Println("  Claude Desktop: installed")

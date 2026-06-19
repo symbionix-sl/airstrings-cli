@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.0] - 2026-06-19
+
+### Added
+
+- Environment-variable auth for headless/CI use — no `airstrings init` required. `AIRSTRINGS_API_KEY` provides credentials and overrides any on-disk workspace; the project and default environment are resolved from the scoped key automatically. `AIRSTRINGS_PROJECT_ID` and `AIRSTRINGS_ENV_ID` skip those lookups for fully stateless, zero-discovery calls, and `AIRSTRINGS_BASE_URL` overrides the API base URL. `airstrings status` reports `source: "env"` when env-var auth is active.
+- Distinct exit codes so scripts and agents can branch on the failure class: `1` generic, `2` usage/bad input, `3` auth, `4` not found, `5` network, `6` rate limited (previously every error exited `1`).
+- `airstrings strings ls` gains `--cursor <c>` and `--key-prefix <p>`, and its `--json` output now includes a `pagination` object (`has_more`, `next_cursor`) so large string sets can be paged instead of dumped. The text mode prints the next-page command when more results exist.
+- `--json` output added to mutations that previously printed only a success line: `sections create`/`delete`, `env use`/`add`/`rm`/`create`, and `mcp status`.
+- `AGENTS.md` — a single read-once reference for driving the CLI from an AI agent (auth, exit codes, `--json` shapes, paging, workspace format).
+- `NO_COLOR` is honored, and the success marker is no longer colorized when stdout is not a TTY (no ANSI escapes leak into pipes or logs).
+
+### Changed
+
+- **Breaking (JSON):** `airstrings strings ls --json` now returns `{ "data": [...], "pagination": { "has_more", "next_cursor" } }` instead of a bare array. Read `.data` for the entries.
+- `airstrings status --json` is now a discovery payload: it adds `source`, `workspace_dir`, `mode`, and an `environments` array alongside the existing project/env/base_url fields.
+
 ## [0.8.0] - 2026-06-19
 
 ### Changed

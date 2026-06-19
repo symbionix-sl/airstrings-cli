@@ -110,6 +110,7 @@ Local workspace for AI-friendly string management. Initialized via `airstrings i
 - `pull` downloads all remote strings into organized CSVs (overwrites local state)
 - Workspace is found by walking up from cwd (like `.git`). `workspace.Find()` handles this
 - CSV format: `key,locale,value,format` — one row per key+locale pair
+- Env-var auth (headless/CI): `AIRSTRINGS_API_KEY` (+ optional `AIRSTRINGS_PROJECT_ID`/`AIRSTRINGS_ENV_ID`/`AIRSTRINGS_BASE_URL`) overrides the workspace. `workspace.ClientFromEnv()` resolves project + default env from a scoped key; `mustClient()`/`clientFor()` prefer it over `ResolveClient()`. See [AGENTS.md](AGENTS.md) for the agent-facing contract
 
 ### MCP Server
 
@@ -135,7 +136,7 @@ Tools: `airstrings_init`, `airstrings_strings_set`, `airstrings_strings_rm`, `ai
 1. **No secrets in source.** API keys only in `.airstrings/config.json` (0600). Never log or print full keys — show first 8 and last 4 chars only
 2. **No external dependencies.** stdlib is sufficient for this CLI. If you think you need a dep, you're wrong
 3. **No command framework.** The switch-based routing is deliberate. It keeps the binary small and the code greppable
-4. **Exit on error.** Handlers do not return errors. `output.Errorf()` is the only error path
+4. **Exit on error.** Handlers do not return errors. `output.Errorf()` (exit 1) and `output.Fail(code, ...)` are the error paths. Exit codes: 1 generic, 2 usage, 3 auth, 4 not-found, 5 network, 6 rate-limited. Classify API/network failures with `failAPI()`; use `output.Fail(output.ExitUsage, ...)` for bad input. `output.Check`/`Success` drop ANSI when stdout is not a TTY or `NO_COLOR` is set
 5. **Validate at boundaries.** Check args before calling the API client. The API provides structured errors for everything else
 6. **Config permissions matter.** Dir: 0700, files: 0600. The config contains API keys
 

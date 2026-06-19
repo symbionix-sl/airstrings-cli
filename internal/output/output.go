@@ -10,7 +10,37 @@ import (
 
 var JSONMode bool
 
-const Check = "\x1b[32m✓\x1b[0m"
+// Exit codes for distinct failure classes, so scripts and agents can branch
+// without parsing messages.
+const (
+	ExitGeneric     = 1
+	ExitUsage       = 2
+	ExitAuth        = 3
+	ExitNotFound    = 4
+	ExitNetwork     = 5
+	ExitRateLimited = 6
+)
+
+var useColor = colorEnabled()
+
+// Check is the success marker, colorized only when stdout is an interactive
+// terminal and NO_COLOR is unset.
+var Check = checkMark()
+
+func colorEnabled() bool {
+	if os.Getenv("NO_COLOR") != "" {
+		return false
+	}
+	info, err := os.Stdout.Stat()
+	return err == nil && info.Mode()&os.ModeCharDevice != 0
+}
+
+func checkMark() string {
+	if useColor {
+		return "\x1b[32m✓\x1b[0m"
+	}
+	return "✓"
+}
 
 // JSON prints v as indented JSON.
 func JSON(v any) {
@@ -38,15 +68,21 @@ func Auto(v any, headers []string, rows [][]string) {
 	}
 }
 
-// Success prints a green success message.
+// Success prints a success message. In JSON mode it is suppressed so callers
+// can emit a structured result instead.
 func Success(msg string) {
 	fmt.Printf("%s %s\n", Check, msg)
 }
 
-// Errorf prints to stderr and exits.
-func Errorf(format string, args ...any) {
+// Fail prints to stderr and exits with the given code.
+func Fail(code int, format string, args ...any) {
 	fmt.Fprintf(os.Stderr, "Error: "+format+"\n", args...)
-	os.Exit(1)
+	os.Exit(code)
+}
+
+// Errorf prints to stderr and exits with the generic error code.
+func Errorf(format string, args ...any) {
+	Fail(ExitGeneric, format, args...)
 }
 
 // Warnf prints a non-fatal warning to stderr.
