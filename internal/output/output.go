@@ -48,3 +48,8 @@ func Errorf(format string, args ...any) {
 	fmt.Fprintf(os.Stderr, "Error: "+format+"\n", args...)
 	os.Exit(1)
 }
+
+// Warnf prints a non-fatal warning to stderr.
+func Warnf(format string, args ...any) {
+	fmt.Fprintf(os.Stderr, "Warning: "+format+"\n", args...)
+}

@@ -414,6 +414,74 @@ func TestMCP_ToolCall_StringsSetInvalidJSON(t *testing.T) {
 	}
 }
 
+func TestMCP_ToolCall_StringsSetFormatRequired(t *testing.T) {
+	dir := t.TempDir()
+	workspace.Init(dir, workspace.WorkspaceConfig{
+		ProjectID: "p", ActiveEnv: "e",
+	})
+
+	origDir, _ := os.Getwd()
+	os.Chdir(dir)
+	defer os.Chdir(origDir)
+
+	cases := map[string]map[string]any{
+		"missing format": {"key": "greeting", "values": `{"en": "Hello"}`},
+		"invalid format": {"key": "greeting", "values": `{"en": "Hello"}`, "format": "xml"},
+	}
+
+	server := &MCPServer{}
+	for name, args := range cases {
+		t.Run(name, func(t *testing.T) {
+			result := callTool(t, server, 11, "airstrings_strings_set", args)
+			if !result.IsError {
+				t.Errorf("expected isError=true for %s", name)
+			}
+		})
+	}
+}
+
+func TestMCP_ToolCall_StringsSetTextBracesWarning(t *testing.T) {
+	dir := t.TempDir()
+	workspace.Init(dir, workspace.WorkspaceConfig{
+		ProjectID: "p", ActiveEnv: "e",
+	})
+
+	origDir, _ := os.Getwd()
+	os.Chdir(dir)
+	defer os.Chdir(origDir)
+
+	server := &MCPServer{}
+	result := callTool(t, server, 12, "airstrings_strings_set", map[string]any{
+		"key":    "greeting",
+		"values": `{"en": "Hi {name}"}`,
+		"format": "text",
+	})
+	if result.IsError {
+		t.Fatalf("expected non-error result, got: %s", result.Content[0].Text)
+	}
+
+	var out struct {
+		Warning string `json:"warning"`
+	}
+	json.Unmarshal([]byte(result.Content[0].Text), &out)
+	if !strings.Contains(out.Warning, "icu") {
+		t.Errorf("expected warning suggesting icu, got %q", out.Warning)
+	}
+
+	clean := callTool(t, server, 13, "airstrings_strings_set", map[string]any{
+		"key":    "plain",
+		"values": `{"en": "Hello"}`,
+		"format": "text",
+	})
+	var cleanOut struct {
+		Warning string `json:"warning"`
+	}
+	json.Unmarshal([]byte(clean.Content[0].Text), &cleanOut)
+	if cleanOut.Warning != "" {
+		t.Errorf("expected no warning for clean text, got %q", cleanOut.Warning)
+	}
+}
+
 func TestMCP_FullWorkflow(t *testing.T) {
 	// This test simulates how an AI assistant would use the MCP server:
 	// 1. initialize
@@ -611,6 +679,7 @@ func TestMCP_ToolCall_StringsSetPush(t *testing.T) {
 	result := callTool(t, server, 14, "airstrings_strings_set", map[string]any{
 		"key":    "greeting",
 		"values": `{"en": "Hello"}`,
+		"format": "text",
 		"push":   true,
 	})
 	if result.IsError {
@@ -670,6 +739,7 @@ func TestMCP_ToolCall_NoPushNoNetwork(t *testing.T) {
 	result := callTool(t, server, 16, "airstrings_strings_set", map[string]any{
 		"key":    "greeting",
 		"values": `{"en": "Hello"}`,
+		"format": "text",
 	})
 	if result.IsError {
 		t.Fatalf("set error: %s", result.Content[0].Text)
@@ -702,6 +772,7 @@ func TestMCP_ToolCall_PushWithoutCredentials(t *testing.T) {
 	result := callTool(t, server, 18, "airstrings_strings_set", map[string]any{
 		"key":    "greeting",
 		"values": `{"en": "Hello"}`,
+		"format": "text",
 		"push":   true,
 	})
 	if !result.IsError {

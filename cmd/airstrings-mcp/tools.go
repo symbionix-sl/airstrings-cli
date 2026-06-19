@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/symbionix-sl/airstrings-cli/internal/client"
 	"github.com/symbionix-sl/airstrings-cli/internal/workspace"
@@ -21,11 +22,11 @@ var stringsSetSchema = InputSchema{
 	Properties: map[string]Property{
 		"key":     {Type: "string", Description: "The string key (e.g., 'onboarding.welcome')"},
 		"values":  {Type: "string", Description: "JSON object of locale=value pairs, e.g. {\"en\": \"Hello\", \"it\": \"Ciao\"}"},
-		"format":  {Type: "string", Description: "String format: 'text' (default) or 'icu'"},
+		"format":  {Type: "string", Description: "String format: 'text' or 'icu'. Required."},
 		"section": {Type: "string", Description: "Section name. If omitted, string goes to flat strings.csv"},
 		"push":    {Type: "boolean", Description: "Also push this key to the API immediately after the local write."},
 	},
-	Required: []string{"key", "values"},
+	Required: []string{"key", "values", "format"},
 }
 
 var stringsRmSchema = InputSchema{
@@ -237,7 +238,15 @@ func handleToolStringsSet(raw json.RawMessage) *CallToolResult {
 
 	format := args.Format
 	if format == "" {
-		format = "text"
+		return errorResult("format is required — must be 'text' or 'icu'")
+	}
+	if err := workspace.ValidateFormat(format); err != nil {
+		return errorResult(err.Error())
+	}
+
+	var warning string
+	if flagged := workspace.FlagICUInText(format, values); len(flagged) > 0 {
+		warning = fmt.Sprintf("text value with {…} placeholders in locale(s) %s — did you mean format 'icu'? text is served verbatim, braces are not interpolated", strings.Join(flagged, ", "))
 	}
 
 	wsDir, err := workspace.Find()
@@ -266,13 +275,17 @@ func handleToolStringsSet(raw json.RawMessage) *CallToolResult {
 		}
 	}
 
-	result, _ := json.Marshal(map[string]any{
+	out := map[string]any{
 		"key":     args.Key,
 		"locales": len(values),
 		"section": args.Section,
 		"format":  format,
 		"pushed":  args.Push,
-	})
+	}
+	if warning != "" {
+		out["warning"] = warning
+	}
+	result, _ := json.Marshal(out)
 	return textResult(string(result))
 }
 

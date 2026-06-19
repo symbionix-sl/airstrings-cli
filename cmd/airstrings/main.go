@@ -121,12 +121,10 @@ Strings:
                           List strings (remote by default); --local reads the
                           workspace CSVs offline (no credentials needed)
   strings get <key>
-  strings set <key> <locale>=<value>... [--format text|icu] [--section <name>] [--push]
+  strings set <key> <locale>=<value>... --format text|icu [--section <name>] [--push]
                           Write to local CSVs; --push also upserts the key to the API
   strings rm <key> [--locale <loc>] [--section <name>] [--push]
                           Remove from local CSVs; --push also removes from the API
-  strings create          Alias of strings set
-  strings delete          Alias of strings rm
 
 Sections:
   sections list
@@ -585,9 +583,9 @@ func handleStrings(args []string) {
 			output.Errorf("usage: airstrings strings get <key>")
 		}
 		handleStringGet(mustClient(), args[1])
-	case "set", "create":
+	case "set":
 		handleStringSet(args[1:])
-	case "rm", "delete":
+	case "rm":
 		handleStringRm(args[1:])
 	default:
 		output.Errorf("unknown strings command: %s", args[0])
@@ -680,11 +678,11 @@ func handleStringGet(c *client.Client, key string) {
 
 func handleStringSet(args []string) {
 	if len(args) < 2 {
-		output.Errorf("usage: airstrings strings set <key> <locale>=<value> [--format text|icu] [--section <name>] [--push]")
+		output.Errorf("usage: airstrings strings set <key> <locale>=<value> --format text|icu [--section <name>] [--push]")
 	}
 
 	key := args[0]
-	format := "text"
+	format := ""
 	section := ""
 	push := false
 	values := make(map[string]string)
@@ -717,6 +715,19 @@ func handleStringSet(args []string) {
 		output.Errorf("at least one locale=value pair is required")
 	}
 
+	if format == "" {
+		output.Errorf("--format is required — must be 'text' or 'icu'")
+	}
+	if err := workspace.ValidateFormat(format); err != nil {
+		output.Errorf("%s", err)
+	}
+
+	var warning string
+	if flagged := workspace.FlagICUInText(format, values); len(flagged) > 0 {
+		warning = fmt.Sprintf("text value with {…} placeholders in locale(s) %s — did you mean --format icu? text is served verbatim, braces are not interpolated", strings.Join(flagged, ", "))
+		output.Warnf("%s: %s", key, warning)
+	}
+
 	wsDir, err := workspace.Find()
 	if err != nil {
 		output.Errorf("%s", err)
@@ -741,13 +752,17 @@ func handleStringSet(args []string) {
 	}
 
 	if output.JSONMode {
-		output.JSON(map[string]any{
+		out := map[string]any{
 			"key":     key,
 			"locales": len(values),
 			"section": section,
 			"format":  format,
 			"pushed":  push,
-		})
+		}
+		if warning != "" {
+			out["warning"] = warning
+		}
+		output.JSON(out)
 		return
 	}
 

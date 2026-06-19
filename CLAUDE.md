@@ -105,7 +105,6 @@ Local workspace for AI-friendly string management. Initialized via `airstrings i
 
 - `init <api-key>` creates workspace with credentials and section dirs
 - `strings set/rm` manipulate CSVs locally without API calls; `--push` also syncs that single key to the API immediately (`workspace.PushKey`/`PushKeyRemoval`: upsert via `UpsertString` — creating the section remotely if needed — full-key removal via `DeleteString`, locale-only removal via nil-value upsert)
-- `strings create`/`strings delete` are aliases of `strings set`/`strings rm`
 - `strings ls --local` lists local workspace strings offline (no client constructed); reads workspace CSVs via `listLocalStrings`
 - `push` uploads all local strings to API in bulk via the import endpoint (creates sections remotely if needed)
 - `pull` downloads all remote strings into organized CSVs (overwrites local state)
@@ -168,4 +167,4 @@ The OpenAPI 3.1 spec is at `../../api/openapi.yaml` (relative to this repo root)
 
 ## String Formats
 
-Two formats: `text` (plain text) and `icu` (ICU MessageFormat). No other values valid. Default is `text` if omitted on create.
+Two formats: `text` (plain text) and `icu` (ICU MessageFormat). No other values valid. `--format` is required on `strings set` — there is no default; an unspecified or invalid format is rejected before the local CSV write. A `text` value containing a `{…}` placeholder triggers a non-fatal warning (printed to stderr, and included as a `warning` field in `--json` output) suggesting `icu` — the write still proceeds, since braces can be legitimate in plain text.

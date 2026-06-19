@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/symbionix-sl/airstrings-cli/internal/client"
@@ -251,4 +252,39 @@ func ValidateSectionName(name string) error {
 		return fmt.Errorf("section name %q is not allowed", name)
 	}
 	return nil
+}
+
+// ValidateFormat checks that a string format is one of the supported values.
+func ValidateFormat(format string) error {
+	switch format {
+	case "text", "icu":
+		return nil
+	default:
+		return fmt.Errorf("invalid format %q — must be 'text' or 'icu'", format)
+	}
+}
+
+// LooksLikeICU reports whether a value contains an ICU-style {…} placeholder.
+func LooksLikeICU(value string) bool {
+	open := strings.IndexByte(value, '{')
+	if open < 0 {
+		return false
+	}
+	return strings.IndexByte(value[open+1:], '}') >= 0
+}
+
+// FlagICUInText returns the sorted locales whose value looks like ICU but is
+// declared as text format. Returns nil when format is not text or none match.
+func FlagICUInText(format string, values map[string]string) []string {
+	if format != "text" {
+		return nil
+	}
+	var flagged []string
+	for loc, val := range values {
+		if LooksLikeICU(val) {
+			flagged = append(flagged, loc)
+		}
+	}
+	sort.Strings(flagged)
+	return flagged
 }

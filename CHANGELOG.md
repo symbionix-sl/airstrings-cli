@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] - 2026-06-19
+
+### Changed
+
+- `airstrings strings set` now requires `--format` (`text` or `icu`). The previous implicit `text` default was removed; an unspecified or invalid format is rejected before the local CSV write. The `airstrings_strings_set` MCP tool likewise makes `format` a required parameter.
+
+### Added
+
+- `airstrings strings set` warns when a `text`-format value contains a `{…}` placeholder and suggests `--format icu`, since `text` is served verbatim and braces are not interpolated. The write still proceeds (braces can be legitimate in plain text). The warning prints to stderr and is included as a `warning` field in `--json` output and in the `airstrings_strings_set` MCP tool result.
+
+### Removed
+
+- `airstrings strings create` / `airstrings strings delete` — undocumented aliases of `strings set` / `strings rm`. Use the canonical commands.
+
 ## [0.7.0] - 2026-06-12
 
 ### Removed

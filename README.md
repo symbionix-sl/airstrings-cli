@@ -64,7 +64,7 @@ airstrings locales                  # List locales with string counts
 
 ### Strings
 
-`strings set` and `strings rm` are local-first: they edit the workspace CSVs and never call the API unless `--push` is given. `strings create` and `strings delete` are aliases of `set` and `rm`.
+`strings set` and `strings rm` are local-first: they edit the workspace CSVs and never call the API unless `--push` is given.
 
 ```bash
 airstrings strings list                          # List all strings (remote)
@@ -72,7 +72,7 @@ airstrings strings list --locale en --limit 50   # Filter by locale
 airstrings strings ls --local                    # List local workspace strings (offline, no credentials)
 airstrings strings ls --local --section onboarding   # List one section, offline
 airstrings strings get welcome.title             # Get a single string (remote)
-airstrings strings set welcome.title en="Hello" es="Hola"            # Write to local CSVs
+airstrings strings set welcome.title en="Hello" es="Hola" --format text   # Write to local CSVs
 airstrings strings set app.name en="My App" --format text --push     # Also upsert to the API
 airstrings strings rm old.unused.key             # Remove from local CSVs
 airstrings strings rm old.unused.key --push      # Also delete from the API
@@ -135,8 +135,8 @@ The workspace workflow lets you manage strings locally and sync with the API. Th
 airstrings init ask_live_xxxxxxxxxxxx
 
 # Add strings locally (no API calls)
-airstrings strings set onboarding.welcome en="Welcome!" it="Benvenuto!" --section onboarding
-airstrings strings set onboarding.welcome de="Willkommen!" es="¡Bienvenido!" fr="Bienvenue!" --section onboarding
+airstrings strings set onboarding.welcome en="Welcome!" it="Benvenuto!" --format text --section onboarding
+airstrings strings set onboarding.welcome de="Willkommen!" es="¡Bienvenido!" fr="Bienvenue!" --format text --section onboarding
 airstrings strings set app.tagline en="The best app" it="La migliore app" --format text
 
 # List local strings (offline, no credentials)
@@ -144,11 +144,11 @@ airstrings strings ls --local
 airstrings strings ls --local --section onboarding
 
 # Edit and remove
-airstrings strings set onboarding.welcome en="Welcome to the app!" --section onboarding
+airstrings strings set onboarding.welcome en="Welcome to the app!" --format text --section onboarding
 airstrings strings rm old.key --section onboarding
 
 # Sync a single key immediately while editing
-airstrings strings set app.tagline en="The best app" --push
+airstrings strings set app.tagline en="The best app" --format text --push
 
 # Push everything to AirStrings
 airstrings push

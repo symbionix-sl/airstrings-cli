@@ -330,6 +330,54 @@ func TestValidateSectionName(t *testing.T) {
 	}
 }
 
+func TestValidateFormat(t *testing.T) {
+	for _, f := range []string{"text", "icu"} {
+		if err := ValidateFormat(f); err != nil {
+			t.Errorf("expected %q to be valid, got error: %v", f, err)
+		}
+	}
+
+	for _, f := range []string{"", "xml", "TEXT", "ICU", "json", "plain"} {
+		if err := ValidateFormat(f); err == nil {
+			t.Errorf("expected %q to be invalid", f)
+		}
+	}
+}
+
+func TestLooksLikeICU(t *testing.T) {
+	icu := []string{"Hi {name}", "{count, plural, one {# item} other {# items}}", "a {0} b", "{}"}
+	for _, v := range icu {
+		if !LooksLikeICU(v) {
+			t.Errorf("expected %q to look like ICU", v)
+		}
+	}
+
+	plain := []string{"Hello", "100% sure", "a { b", "c } d", "", "no braces here"}
+	for _, v := range plain {
+		if LooksLikeICU(v) {
+			t.Errorf("expected %q to not look like ICU", v)
+		}
+	}
+}
+
+func TestFlagICUInText(t *testing.T) {
+	values := map[string]string{"en": "Hi {name}", "it": "Ciao", "de": "Hallo {name}"}
+
+	if got := FlagICUInText("icu", values); got != nil {
+		t.Errorf("expected nil for icu format, got %v", got)
+	}
+
+	got := FlagICUInText("text", values)
+	want := []string{"de", "en"}
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Errorf("expected %v, got %v", want, got)
+	}
+
+	if got := FlagICUInText("text", map[string]string{"en": "Hello"}); got != nil {
+		t.Errorf("expected nil when no braces, got %v", got)
+	}
+}
+
 // --- Credential method tests ---
 
 func TestActiveCredential(t *testing.T) {
