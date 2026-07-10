@@ -37,6 +37,20 @@ func main() {
 	}
 	args = filtered
 
+	for _, a := range args {
+		if a == "--help" || a == "-h" {
+			target := ""
+			for _, t := range args {
+				if !strings.HasPrefix(t, "-") {
+					target = t
+					break
+				}
+			}
+			printCommandHelp(target)
+			os.Exit(0)
+		}
+	}
+
 	// Handle shorthand flags: -p -u <project>, -e -u <env>, chainable
 	if handleShorthandFlags(args) {
 		return
@@ -163,6 +177,7 @@ MCP:
 
 Flags:
   --json                  Output as JSON (works with any command)
+  <command> --help        Show help for a command
 
 Environment variables (headless / CI — no 'init' needed):
   AIRSTRINGS_API_KEY      Scoped API key; overrides the workspace credential.
@@ -177,6 +192,131 @@ Exit codes:
   0 ok   1 error   2 usage   3 auth   4 not-found   5 network   6 rate-limited
 
 `)
+}
+
+var commandHelp = map[string]string{
+	"init": `Usage: airstrings init <api-key> [--url <base-url>] [--purge]
+
+Initialize workspace and authenticate.
+
+Flags:
+  --url, --base-url <url>   API base URL (default https://api.airstrings.com)
+  --purge                   Re-init and remove local strings
+`,
+	"status": `Usage: airstrings status
+
+Show active project, environment, and key.
+`,
+	"project": `Usage: airstrings project
+
+Show current project info.
+`,
+	"env": `Usage: airstrings env [use|add|rm|create] [options]
+
+  env                                   List environments (✓ = active)
+  env use <name>                        Switch active environment
+  env add <api-key> [--url <base-url>]  Add environment credentials
+  env rm <name>                         Remove environment credentials
+  env create <name>                     Create a new environment
+  -e -u <env-name>                      Switch environment (shorthand)
+
+Flags:
+  --url, --base-url <url>   API base URL (env add)
+`,
+	"apikey": `Usage: airstrings apikey rotate [--env <name>]
+
+Rotate the workspace API key.
+
+Flags:
+  --env <name>              Rotate the key for a specific environment
+                            (default: active environment)
+`,
+	"strings": `Usage: airstrings strings <ls|get|set|rm> [options]
+
+  strings ls [--local] [--section <name>] [--locale <loc>]
+             [--limit <n>] [--cursor <c>] [--key-prefix <p>]
+                          List strings (remote by default); --local reads the
+                          workspace CSVs offline (no credentials needed).
+                          --limit/--cursor page results; --json includes
+                          pagination.next_cursor for the next page
+  strings get <key>
+  strings set <key> <locale>=<value>... --format text|icu [--section <name>] [--push]
+                          Write to local CSVs; --push also upserts the key to the API
+  strings rm <key> [--locale <loc>] [--section <name>] [--push]
+                          Remove from local CSVs; --push also removes from the API
+`,
+	"sections": `Usage: airstrings sections <list|create|delete>
+
+  sections list
+  sections create <name> [--description <desc>]
+  sections delete <id>
+
+Flags:
+  --description, -d <desc>  Section description (sections create)
+`,
+	"bundles": `Usage: airstrings bundles [pull] [options]
+
+  bundles                 List published bundles
+  bundles pull [dir] [--locale <bcp47>]
+                          Pull published, signed bundles into a committable
+                          seed folder (default airstrings/bundles/) for
+                          offline fallback. Distinct from 'pull', which
+                          fetches draft strings as editable CSVs
+
+Flags:
+  --locale <bcp47>        Pull a single locale (bundles pull)
+`,
+	"publish": `Usage: airstrings publish [locale...]
+
+Publish bundles (all locales if none specified).
+`,
+	"doctor": `Usage: airstrings doctor [dir] [--no-input]
+
+Verify bundled-fallback integration in this project.
+
+Flags:
+  --no-input              Skip the interactive ignore prompt
+`,
+	"locales": `Usage: airstrings locales
+
+List locales with string counts.
+`,
+	"import": `Usage: airstrings import <csv|status> [options]
+
+  import csv <file>       Import strings from CSV file
+  import status <id>      Check import status
+`,
+	"push": `Usage: airstrings push [--section <name>]
+
+Push local strings to API.
+
+Flags:
+  --section <name>        Push only the given section
+`,
+	"pull": `Usage: airstrings pull [--section <name>]
+
+Pull remote draft strings to local CSVs (published bundles: bundles pull).
+
+Flags:
+  --section <name>        Pull only the given section
+`,
+	"mcp": `Usage: airstrings mcp <install|uninstall|status>
+
+  mcp install                  Install MCP server for Claude Code
+  mcp install --claude-desktop Install MCP server for Claude Desktop
+  mcp uninstall                Remove MCP server from Claude Code
+  mcp uninstall --claude-desktop
+                               Remove MCP server from Claude Desktop
+  mcp status                   Check MCP installation status
+`,
+}
+
+func printCommandHelp(cmd string) {
+	if h, ok := commandHelp[cmd]; ok {
+		fmt.Print(h)
+		return
+	}
+	printUsage()
 }
 
 // mustWorkspace finds and loads the workspace config, or exits with an error.
@@ -398,6 +538,10 @@ func parseKeyAndURL(args []string) (string, string) {
 			if i < len(args) {
 				baseURL = args[i]
 			}
+		default:
+			if strings.HasPrefix(args[i], "-") {
+				output.Fail(output.ExitUsage, "unknown flag: %s", args[i])
+			}
 		}
 	}
 	return apiKey, baseURL
@@ -445,6 +589,11 @@ func addCredentials(wsCfg *workspace.WorkspaceConfig, apiKey, baseURL string, en
 }
 
 func handleStatus(args []string) {
+	for _, a := range args {
+		if strings.HasPrefix(a, "-") {
+			output.Fail(output.ExitUsage, "unknown flag: %s", a)
+		}
+	}
 	if env, ok := workspace.EnvAuthFromEnv(); ok {
 		printEnvStatus(env)
 		return
@@ -458,6 +607,11 @@ func handleStatus(args []string) {
 func handleProject(args []string) {
 	if len(args) > 0 && args[0] == "use" {
 		output.Errorf("workspace is bound to one project — init a new workspace for a different project")
+	}
+	for _, a := range args {
+		if strings.HasPrefix(a, "-") {
+			output.Fail(output.ExitUsage, "unknown flag: %s", a)
+		}
 	}
 
 	c := mustClient()
@@ -487,6 +641,11 @@ func handleEnv(args []string) {
 	if len(args) > 0 && args[0] == "use" {
 		if len(args) < 2 {
 			output.Fail(output.ExitUsage, "usage: airstrings env use <name>")
+		}
+		for _, a := range args[1:] {
+			if strings.HasPrefix(a, "-") {
+				output.Fail(output.ExitUsage, "unknown flag: %s", a)
+			}
 		}
 		wsDir, wsCfg := mustWorkspace()
 		switchEnv(wsCfg, args[1])
@@ -541,6 +700,11 @@ func handleEnv(args []string) {
 		if len(args) < 2 {
 			output.Fail(output.ExitUsage, "usage: airstrings env rm <name>")
 		}
+		for _, a := range args[1:] {
+			if strings.HasPrefix(a, "-") {
+				output.Fail(output.ExitUsage, "unknown flag: %s", a)
+			}
+		}
 		wsDir, wsCfg := mustWorkspace()
 
 		// Find by name (case-insensitive) or ID
@@ -580,10 +744,15 @@ func handleEnv(args []string) {
 	}
 
 	if len(args) > 0 && args[0] == "create" {
-		c := mustClient()
 		if len(args) < 2 {
 			output.Fail(output.ExitUsage, "usage: airstrings env create <name>")
 		}
+		for _, a := range args[1:] {
+			if strings.HasPrefix(a, "-") {
+				output.Fail(output.ExitUsage, "unknown flag: %s", a)
+			}
+		}
+		c := mustClient()
 		env, err := c.CreateEnvironment(client.CreateEnvRequest{Name: args[1]})
 		if err != nil {
 			failAPI("create environment", err)
@@ -594,6 +763,12 @@ func handleEnv(args []string) {
 		}
 		output.Success(fmt.Sprintf("Environment %q created (id: %s)", env.Name, env.ID))
 		return
+	}
+
+	for _, a := range args {
+		if strings.HasPrefix(a, "-") {
+			output.Fail(output.ExitUsage, "unknown flag: %s", a)
+		}
 	}
 
 	c := mustClient()
@@ -641,10 +816,15 @@ func handleAPIKey(args []string) {
 func handleAPIKeyRotate(args []string) {
 	envName := ""
 	for i := 0; i < len(args); i++ {
-		if args[i] == "--env" {
+		switch args[i] {
+		case "--env":
 			i++
 			if i < len(args) {
 				envName = args[i]
+			}
+		default:
+			if strings.HasPrefix(args[i], "-") {
+				output.Fail(output.ExitUsage, "unknown flag: %s", args[i])
 			}
 		}
 	}
@@ -707,7 +887,7 @@ func handleStrings(args []string) {
 			listLocalStrings(args[1:])
 			return
 		}
-		handleStringList(mustClient(), args[1:])
+		handleStringList(args[1:])
 	case "get":
 		if len(args) < 2 {
 			output.Fail(output.ExitUsage, "usage: airstrings strings get <key>")
@@ -722,7 +902,7 @@ func handleStrings(args []string) {
 	}
 }
 
-func handleStringList(c *client.Client, args []string) {
+func handleStringList(args []string) {
 	opts := client.ListStringsOpts{}
 	keyPrefix := ""
 	for i := 0; i < len(args); i++ {
@@ -752,8 +932,14 @@ func handleStringList(c *client.Client, args []string) {
 			if i < len(args) {
 				keyPrefix = args[i]
 			}
+		default:
+			if strings.HasPrefix(args[i], "-") {
+				output.Fail(output.ExitUsage, "unknown flag: %s", args[i])
+			}
 		}
 	}
+
+	c := mustClient()
 
 	var entries []client.StringEntry
 	var page client.PaginationMeta
@@ -865,6 +1051,9 @@ func handleStringSet(args []string) {
 		case "--push":
 			push = true
 		default:
+			if strings.HasPrefix(args[i], "-") {
+				output.Fail(output.ExitUsage, "unknown flag: %s", args[i])
+			}
 			parts := strings.SplitN(args[i], "=", 2)
 			if len(parts) == 2 {
 				values[parts[0]] = parts[1]
@@ -963,6 +1152,10 @@ func handleStringRm(args []string) {
 			}
 		case "--push":
 			push = true
+		default:
+			if strings.HasPrefix(args[i], "-") {
+				output.Fail(output.ExitUsage, "unknown flag: %s", args[i])
+			}
 		}
 	}
 
@@ -1003,14 +1196,18 @@ func handleStringRm(args []string) {
 // --- Section commands ---
 
 func handleSections(args []string) {
-	c := mustClient()
-
 	if len(args) == 0 {
 		args = []string{"list"}
 	}
 
 	switch args[0] {
 	case "list", "ls":
+		for _, a := range args[1:] {
+			if strings.HasPrefix(a, "-") {
+				output.Fail(output.ExitUsage, "unknown flag: %s", a)
+			}
+		}
+		c := mustClient()
 		list, err := c.ListSections()
 		if err != nil {
 			failAPI("list sections", err)
@@ -1038,13 +1235,19 @@ func handleSections(args []string) {
 		}
 		req := client.CreateSectionRequest{Name: args[1]}
 		for i := 2; i < len(args); i++ {
-			if args[i] == "--description" || args[i] == "-d" {
+			switch args[i] {
+			case "--description", "-d":
 				i++
 				if i < len(args) {
 					req.Description = args[i]
 				}
+			default:
+				if strings.HasPrefix(args[i], "-") {
+					output.Fail(output.ExitUsage, "unknown flag: %s", args[i])
+				}
 			}
 		}
+		c := mustClient()
 		sec, err := c.CreateSection(req)
 		if err != nil {
 			failAPI("create section", err)
@@ -1059,6 +1262,12 @@ func handleSections(args []string) {
 		if len(args) < 2 {
 			output.Fail(output.ExitUsage, "usage: airstrings sections delete <id>")
 		}
+		for _, a := range args[2:] {
+			if strings.HasPrefix(a, "-") {
+				output.Fail(output.ExitUsage, "unknown flag: %s", a)
+			}
+		}
+		c := mustClient()
 		if err := c.DeleteSection(args[1]); err != nil {
 			failAPI("delete section", err)
 		}
@@ -1079,6 +1288,12 @@ func handleBundles(args []string) {
 	if len(args) > 0 && args[0] == "pull" {
 		handleBundlesPull(args[1:])
 		return
+	}
+
+	for _, a := range args {
+		if strings.HasPrefix(a, "-") {
+			output.Fail(output.ExitUsage, "unknown flag: %s", a)
+		}
 	}
 
 	c := mustClient()
@@ -1284,15 +1499,15 @@ func doctorSummary(rep *doctor.Report) string {
 }
 
 func handlePublish(args []string) {
-	c := mustClient()
-
 	var locales []string
 	for _, a := range args {
-		if !strings.HasPrefix(a, "-") {
-			locales = append(locales, a)
+		if strings.HasPrefix(a, "-") {
+			output.Fail(output.ExitUsage, "unknown flag: %s", a)
 		}
+		locales = append(locales, a)
 	}
 
+	c := mustClient()
 	resp, err := c.PublishBundles(locales)
 	if err != nil {
 		failAPI("publish", err)
@@ -1317,8 +1532,13 @@ func handlePublish(args []string) {
 // --- Locale commands ---
 
 func handleLocales(args []string) {
-	c := mustClient()
+	for _, a := range args {
+		if strings.HasPrefix(a, "-") {
+			output.Fail(output.ExitUsage, "unknown flag: %s", a)
+		}
+	}
 
+	c := mustClient()
 	locales, err := c.ListLocales()
 	if err != nil {
 		failAPI("list locales", err)
@@ -1340,10 +1560,13 @@ func handleLocales(args []string) {
 // --- Import commands ---
 
 func handleImport(args []string) {
-	c := mustClient()
-
 	if len(args) == 0 {
 		output.Fail(output.ExitUsage, "usage: airstrings import csv <file> | airstrings import status <id>")
+	}
+	for _, a := range args[1:] {
+		if strings.HasPrefix(a, "-") {
+			output.Fail(output.ExitUsage, "unknown flag: %s", a)
+		}
 	}
 
 	switch args[0] {
@@ -1351,6 +1574,7 @@ func handleImport(args []string) {
 		if len(args) < 2 {
 			output.Fail(output.ExitUsage, "usage: airstrings import csv <file>")
 		}
+		c := mustClient()
 		data, err := os.ReadFile(args[1])
 		if err != nil {
 			output.Errorf("read file: %s", err)
@@ -1369,6 +1593,7 @@ func handleImport(args []string) {
 		if len(args) < 2 {
 			output.Fail(output.ExitUsage, "usage: airstrings import status <id>")
 		}
+		c := mustClient()
 		status, err := c.GetImport(args[1])
 		if err != nil {
 			failAPI("get import", err)
@@ -1483,10 +1708,16 @@ func hasFlag(args []string, flag string) bool {
 func listLocalStrings(args []string) {
 	section := ""
 	for i := 0; i < len(args); i++ {
-		if args[i] == "--section" {
+		switch args[i] {
+		case "--section":
 			i++
 			if i < len(args) {
 				section = args[i]
+			}
+		case "--local":
+		default:
+			if strings.HasPrefix(args[i], "-") {
+				output.Fail(output.ExitUsage, "unknown flag: %s", args[i])
 			}
 		}
 	}
@@ -1557,10 +1788,15 @@ type localRow struct {
 func handlePush(args []string) {
 	section := ""
 	for i := 0; i < len(args); i++ {
-		if args[i] == "--section" {
+		switch args[i] {
+		case "--section":
 			i++
 			if i < len(args) {
 				section = args[i]
+			}
+		default:
+			if strings.HasPrefix(args[i], "-") {
+				output.Fail(output.ExitUsage, "unknown flag: %s", args[i])
 			}
 		}
 	}
@@ -1621,10 +1857,15 @@ func handlePush(args []string) {
 func handlePull(args []string) {
 	section := ""
 	for i := 0; i < len(args); i++ {
-		if args[i] == "--section" {
+		switch args[i] {
+		case "--section":
 			i++
 			if i < len(args) {
 				section = args[i]
+			}
+		default:
+			if strings.HasPrefix(args[i], "-") {
+				output.Fail(output.ExitUsage, "unknown flag: %s", args[i])
 			}
 		}
 	}
@@ -1674,20 +1915,35 @@ func handleMCP(args []string) {
 	case "install":
 		claudeDesktop := false
 		for _, a := range args[1:] {
-			if a == "--claude-desktop" {
+			switch a {
+			case "--claude-desktop":
 				claudeDesktop = true
+			default:
+				if strings.HasPrefix(a, "-") {
+					output.Fail(output.ExitUsage, "unknown flag: %s", a)
+				}
 			}
 		}
 		handleMCPInstall(claudeDesktop)
 	case "uninstall":
 		claudeDesktop := false
 		for _, a := range args[1:] {
-			if a == "--claude-desktop" {
+			switch a {
+			case "--claude-desktop":
 				claudeDesktop = true
+			default:
+				if strings.HasPrefix(a, "-") {
+					output.Fail(output.ExitUsage, "unknown flag: %s", a)
+				}
 			}
 		}
 		handleMCPUninstall(claudeDesktop)
 	case "status":
+		for _, a := range args[1:] {
+			if strings.HasPrefix(a, "-") {
+				output.Fail(output.ExitUsage, "unknown flag: %s", a)
+			}
+		}
 		handleMCPStatus()
 	default:
 		output.Fail(output.ExitUsage, "unknown mcp command: %s", args[0])

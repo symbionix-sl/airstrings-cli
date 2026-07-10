@@ -20,6 +20,9 @@ command below is stable and machine-friendly.
   | 5    | network      | yes (backoff) |
   | 6    | rate limited | yes (backoff) |
 
+- Any command + `--help`/`-h` prints its help text and exits 0 — nothing is
+  executed, no side effects. Safe to probe usage this way.
+- Unknown flags exit 2 (usage) — the command does not run. Fix the invocation.
 - Set `NO_COLOR=1` (or just pipe — non-TTY auto-disables color) for clean output.
 
 ## Auth — two ways
