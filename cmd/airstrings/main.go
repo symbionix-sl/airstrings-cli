@@ -1318,10 +1318,17 @@ func handleBundles(args []string) {
 }
 
 const firstPullHint = `First pull — commit this folder so your apps ship with bundled fallback strings.
-  iOS:     add the folder to your app target as a folder reference (SPM: resources: [.copy("airstrings")])
-  Android: copy or map the folder into src/main/assets/
-  Web:     Node seeds from <cwd>/airstrings/bundles/ automatically; browsers import bundle JSON at build time
+  iOS:          add the folder to your app target as a folder reference (SPM: resources: [.copy("airstrings")])
+  Android:      copy or map the folder into src/main/assets/
+  Web:          Node seeds from <cwd>/airstrings/bundles/ automatically; browsers import bundle JSON at build time
+  React Native: require() each bundle JSON, or ship via the iOS + Android steps above (RN uses both native bundles)
 Then run: airstrings doctor   (verifies your project is wired up)
+See: docs/contracts/bundled-fallback.md
+`
+
+const refreshPullHint = `Bundles refreshed — rebuild your app to ship the updated strings.
+New locale files must be embedded like the first pull (iOS folder ref / Android assets / Web import / RN require).
+Verify wiring: airstrings doctor
 See: docs/contracts/bundled-fallback.md
 `
 
@@ -1370,6 +1377,8 @@ func handleBundlesPull(args []string) {
 
 	if res.FirstPull {
 		fmt.Fprint(os.Stderr, firstPullHint)
+	} else {
+		fmt.Fprint(os.Stderr, refreshPullHint)
 	}
 
 	if output.JSONMode {
