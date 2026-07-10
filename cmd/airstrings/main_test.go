@@ -1,10 +1,13 @@
 package main
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 )
 
@@ -98,5 +101,47 @@ func TestCLISubprocess(t *testing.T) {
 				t.Errorf("stderr missing %q\nstderr: %s", tc.wantStderr, stderr)
 			}
 		})
+	}
+}
+
+func TestPublishHelpMakesNoNetworkCall(t *testing.T) {
+	var hits int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&hits, 1)
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("{}"))
+	}))
+	defer srv.Close()
+
+	cmd := exec.Command(binPath, "publish", "--help")
+	cmd.Dir = t.TempDir()
+	cmd.Env = append(scrubbedEnv(),
+		"AIRSTRINGS_API_KEY=ak_test_regression",
+		"AIRSTRINGS_PROJECT_ID=proj_test",
+		"AIRSTRINGS_ENV_ID=env_test",
+		"AIRSTRINGS_BASE_URL="+srv.URL,
+	)
+	var stdout, stderr strings.Builder
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+
+	code := 0
+	if err != nil {
+		exitErr, ok := err.(*exec.ExitError)
+		if !ok {
+			t.Fatalf("run: %v", err)
+		}
+		code = exitErr.ExitCode()
+	}
+
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0\nstdout: %s\nstderr: %s", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "Usage: airstrings publish [locale...]") {
+		t.Errorf("stdout missing publish usage\nstdout: %s", stdout.String())
+	}
+	if n := atomic.LoadInt32(&hits); n != 0 {
+		t.Errorf("publish --help made %d network request(s); want 0", n)
 	}
 }
