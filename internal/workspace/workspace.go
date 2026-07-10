@@ -95,6 +95,13 @@ func Init(dir string, cfg WorkspaceConfig) error {
 		return fmt.Errorf("write config: %w", err)
 	}
 
+	gitignorePath := filepath.Join(wsDir, ".gitignore")
+	if _, err := os.Stat(gitignorePath); os.IsNotExist(err) {
+		if err := os.WriteFile(gitignorePath, []byte("config.json\ndoctor.json\n"), 0600); err != nil {
+			return fmt.Errorf("write gitignore: %w", err)
+		}
+	}
+
 	return nil
 }
 

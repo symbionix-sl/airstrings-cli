@@ -72,6 +72,35 @@ func TestInit_AlreadyExists(t *testing.T) {
 	}
 }
 
+func TestInit_GitignoreProtectsSecrets(t *testing.T) {
+	dir := t.TempDir()
+	if err := Init(dir, WorkspaceConfig{ProjectID: "p1", ActiveEnv: "e1"}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	giPath := filepath.Join(dir, ".airstrings", ".gitignore")
+
+	got, err := os.ReadFile(giPath)
+	if err != nil {
+		t.Fatalf("gitignore missing: %v", err)
+	}
+	if string(got) != "config.json\ndoctor.json\n" {
+		t.Errorf("unexpected gitignore content: %q", got)
+	}
+
+	// Re-init must not clobber a user-customized gitignore.
+	custom := []byte("config.json\ndoctor.json\ncustom\n")
+	if err := os.WriteFile(giPath, custom, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := Init(dir, WorkspaceConfig{ProjectID: "p1", ActiveEnv: "e2"}); err != nil {
+		t.Fatalf("unexpected error on re-init: %v", err)
+	}
+	got, _ = os.ReadFile(giPath)
+	if string(got) != string(custom) {
+		t.Errorf("re-init clobbered gitignore: %q", got)
+	}
+}
+
 func TestLoadConfig(t *testing.T) {
 	dir := t.TempDir()
 	wsDir := filepath.Join(dir, ".airstrings")
@@ -173,7 +202,7 @@ func TestSaveConfig_AtomicAndPermissions(t *testing.T) {
 		t.Fatalf("read dir: %v", err)
 	}
 	for _, e := range entries {
-		if e.Name() != "config.json" {
+		if e.Name() != "config.json" && e.Name() != ".gitignore" {
 			t.Errorf("unexpected leftover file: %s", e.Name())
 		}
 	}

@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.0] - 2026-07-10
+
+### Added
+
+- `airstrings init` now writes a `.airstrings/.gitignore` (ignoring `config.json` and `doctor.json`) whenever one is not already present, so the workspace credential file never lands in the project's git repo. An existing or user-customized `.gitignore` is left untouched, and the string CSVs remain committable.
+
+### Security
+
+- Keeps the API key in `.airstrings/config.json` out of git by default. Note: passing the key as a positional argument to `init` still exposes it via shell history and the process list — use the `AIRSTRINGS_API_KEY` environment variable for headless/CI to avoid both.
+
 ## [0.9.1] - 2026-07-10
 
 ### Added

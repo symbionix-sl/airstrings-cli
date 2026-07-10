@@ -22,5 +22,8 @@ coverage.out
 .env
 .env.*
 
+# Workspace (may contain API keys)
+/.airstrings/
+
 # Nested repos
 /homebrew/
