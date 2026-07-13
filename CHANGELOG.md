@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.0] - 2026-07-13
+
+### Added
+
+- `airstrings promote preview` — read-only diff of what a staging→production promotion would change (`--from`/`--to` env names; defaults to active→default env). Promotions are still applied in the webapp; `promote apply` is intentionally not provided.
+- MCP tool `airstrings_promote_preview` exposing the same read-only diff to agents.
+- `airstrings status` now reports a `protection` field (`protected`/`yolo`/`unknown`) derived from the default environment's sealed state. It is best-effort — status makes one network call for it and degrades to `unknown` on any error, never failing.
+
 ## [0.11.0] - 2026-07-10
 
 ### Added
