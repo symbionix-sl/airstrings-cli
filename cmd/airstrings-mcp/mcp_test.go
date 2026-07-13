@@ -100,13 +100,14 @@ func TestMCP_ToolsList(t *testing.T) {
 	json.Unmarshal(result, &toolsList)
 
 	expectedTools := map[string]bool{
-		"airstrings_init":        false,
-		"airstrings_strings_set": false,
-		"airstrings_strings_rm":  false,
-		"airstrings_strings_ls":  false,
-		"airstrings_push":        false,
-		"airstrings_pull":        false,
-		"airstrings_publish":     false,
+		"airstrings_init":            false,
+		"airstrings_strings_set":     false,
+		"airstrings_strings_rm":      false,
+		"airstrings_strings_ls":      false,
+		"airstrings_push":            false,
+		"airstrings_pull":            false,
+		"airstrings_publish":         false,
+		"airstrings_promote_preview": false,
 	}
 
 	for _, tool := range toolsList.Tools {
