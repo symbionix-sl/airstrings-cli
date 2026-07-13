@@ -94,6 +94,8 @@ func main() {
 		handlePush(args)
 	case "pull":
 		handlePull(args)
+	case "promote":
+		handlePromote(args)
 	case "mcp":
 		handleMCP(args)
 	case "profile":
@@ -159,6 +161,11 @@ Bundles:
   publish [locale...]     Publish bundles (all locales if none specified)
   doctor [dir] [--no-input]
                           Verify bundled-fallback integration in this project
+
+Promote:
+  promote preview [--from <env>] [--to <env>]
+                          Preview the pending string diff between two environments
+                          (defaults: from = active env, to = default env). Read-only.
 
 Import:
   import csv <file>       Import strings from CSV file
@@ -285,6 +292,15 @@ List locales with string counts.
 
   import csv <file>       Import strings from CSV file
   import status <id>      Check import status
+`,
+	"promote": `Usage: airstrings promote preview [--from <env-name>] [--to <env-name>]
+
+Preview the pending string diff between two environments. Read-only — no writes.
+
+  --from <env-name>   Source environment (default: active env)
+  --to <env-name>     Target environment (default: default env)
+
+Only 'preview' is available.
 `,
 	"push": `Usage: airstrings push [--section <name>]
 
@@ -1606,6 +1622,122 @@ func handlePublish(args []string) {
 		}
 	}
 	output.Success(fmt.Sprintf("Published at %s", resp.PublishedAt.Format("2006-01-02 15:04:05 UTC")))
+}
+
+// --- Promote commands ---
+
+func handlePromote(args []string) {
+	if len(args) == 0 {
+		output.Fail(output.ExitUsage, "usage: airstrings promote preview [--from <env-name>] [--to <env-name>]")
+	}
+	switch args[0] {
+	case "preview":
+		handlePromotePreview(args[1:])
+	default:
+		output.Fail(output.ExitUsage, "unknown promote command: %s — only 'preview' is available", args[0])
+	}
+}
+
+func handlePromotePreview(args []string) {
+	fromName := ""
+	toName := ""
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--from":
+			i++
+			if i < len(args) {
+				fromName = args[i]
+			}
+		case "--to":
+			i++
+			if i < len(args) {
+				toName = args[i]
+			}
+		default:
+			if strings.HasPrefix(args[i], "-") {
+				output.Fail(output.ExitUsage, "unknown flag: %s", args[i])
+			}
+			output.Fail(output.ExitUsage, "usage: airstrings promote preview [--from <env-name>] [--to <env-name>]")
+		}
+	}
+
+	c := mustClient()
+	envs, err := c.ListEnvironments()
+	if err != nil {
+		failAPI("list environments", err)
+	}
+
+	sourceID := c.EnvID()
+	if fromName != "" {
+		sourceID = resolveEnvID(envs, fromName)
+	}
+
+	targetID := ""
+	for _, e := range envs {
+		if e.IsDefault {
+			targetID = e.ID
+			break
+		}
+	}
+	if toName != "" {
+		targetID = resolveEnvID(envs, toName)
+	}
+
+	if sourceID == "" {
+		output.Fail(output.ExitUsage, "could not resolve source environment — pass --from <env-name>")
+	}
+	if targetID == "" {
+		output.Fail(output.ExitUsage, "could not resolve target environment — pass --to <env-name>")
+	}
+	if sourceID == targetID {
+		output.Fail(output.ExitUsage, "source and target are the same environment (%s) — pass an explicit --from <env-name>. Under env-var auth without AIRSTRINGS_ENV_ID the active env IS the default, so --from must be set explicitly", envDisplayName(envs, sourceID))
+	}
+
+	resp, err := c.PromotionPreview(sourceID, targetID)
+	if err != nil {
+		failAPI("promotion preview", err)
+	}
+
+	if output.JSONMode {
+		output.JSON(resp)
+		return
+	}
+
+	fmt.Printf("Preview %s → %s: %d added, %d updated, %d extra\n",
+		envDisplayName(envs, sourceID), envDisplayName(envs, targetID),
+		resp.Summary.Added, resp.Summary.Updated, resp.Summary.Extra)
+
+	headers := []string{"KEY", "LOCALE", "CHANGE"}
+	var rows [][]string
+	for _, e := range resp.Entries {
+		for _, l := range e.Locales {
+			rows = append(rows, []string{e.Key, l.Locale, l.ChangeType})
+		}
+	}
+	output.Table(headers, rows)
+}
+
+func resolveEnvID(envs []client.Environment, name string) string {
+	for _, e := range envs {
+		if strings.EqualFold(e.Name, name) || e.ID == name {
+			return e.ID
+		}
+	}
+	var names []string
+	for _, e := range envs {
+		names = append(names, e.Name)
+	}
+	output.Fail(output.ExitUsage, "environment %q not found. Available: %s", name, strings.Join(names, ", "))
+	return ""
+}
+
+func envDisplayName(envs []client.Environment, id string) string {
+	for _, e := range envs {
+		if e.ID == id {
+			return e.Name
+		}
+	}
+	return id
 }
 
 // --- Locale commands ---

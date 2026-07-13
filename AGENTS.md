@@ -80,6 +80,7 @@ airstrings sections list|create <name>|delete <id>
 airstrings publish [locale...]         # sign + publish bundles to the CDN
 airstrings bundles                     # list published bundles
 airstrings bundles pull [dir]          # download signed bundles for offline fallback
+airstrings promote preview [--from <env>] [--to <env>]  # preview env→env string diff (read-only)
 airstrings import csv <file> | status <id>
 airstrings apikey rotate [--env name]
 ```
