@@ -46,8 +46,11 @@ the CLI resolves both automatically; supply the IDs to make calls fully stateles
 (zero discovery round-trips).
 
 Confirm what you're pointed at any time: `airstrings status --json` →
-`{source, project_id, env_id, base_url, environments[...], mode, workspace_dir}`.
-`source` is `"workspace"` or `"env"`.
+`{source, project_id, env_id, base_url, protection, environments[...], mode, workspace_dir}`.
+`source` is `"workspace"` or `"env"`. `protection` is `"protected"` (production
+sealed — changes reach it via promote), `"yolo"` (direct publish to production
+enabled), or `"unknown"`; it is derived from one best-effort API call and
+degrades to `"unknown"` rather than failing, so `status` never errors on it.
 
 ## Core commands
 
@@ -77,6 +80,7 @@ airstrings sections list|create <name>|delete <id>
 airstrings publish [locale...]         # sign + publish bundles to the CDN
 airstrings bundles                     # list published bundles
 airstrings bundles pull [dir]          # download signed bundles for offline fallback
+airstrings promote preview [--from <env>] [--to <env>]  # preview env→env string diff (read-only)
 airstrings import csv <file> | status <id>
 airstrings apikey rotate [--env name]
 ```

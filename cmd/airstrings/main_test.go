@@ -104,6 +104,83 @@ func TestCLISubprocess(t *testing.T) {
 	}
 }
 
+func TestStatusReportsProtection(t *testing.T) {
+	envList := func(defaultSealed bool) string {
+		sealed := "false"
+		if defaultSealed {
+			sealed = "true"
+		}
+		return `{"data":[` +
+			`{"id":"env_prod","project_id":"proj_test","name":"production","is_default":true,"is_sealed":` + sealed + `},` +
+			`{"id":"env_dev","project_id":"proj_test","name":"dev","is_default":false,"is_sealed":false}` +
+			`]}`
+	}
+
+	cases := []struct {
+		name    string
+		handler http.HandlerFunc
+		want    string
+	}{
+		{
+			name: "sealed default env is protected",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				w.Write([]byte(envList(true)))
+			},
+			want: `"protection": "protected"`,
+		},
+		{
+			name: "unsealed default env is yolo",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				w.Write([]byte(envList(false)))
+			},
+			want: `"protection": "yolo"`,
+		},
+		{
+			name: "api error is unknown",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusInternalServerError)
+				w.Write([]byte(`{"error":"boom"}`))
+			},
+			want: `"protection": "unknown"`,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(tc.handler)
+			defer srv.Close()
+
+			cmd := exec.Command(binPath, "status", "--json")
+			cmd.Dir = t.TempDir()
+			cmd.Env = append(scrubbedEnv(),
+				"AIRSTRINGS_API_KEY=ak_test_protection",
+				"AIRSTRINGS_PROJECT_ID=proj_test",
+				"AIRSTRINGS_ENV_ID=env_prod",
+				"AIRSTRINGS_BASE_URL="+srv.URL,
+			)
+			var stdout, stderr strings.Builder
+			cmd.Stdout = &stdout
+			cmd.Stderr = &stderr
+			err := cmd.Run()
+
+			code := 0
+			if err != nil {
+				exitErr, ok := err.(*exec.ExitError)
+				if !ok {
+					t.Fatalf("run: %v", err)
+				}
+				code = exitErr.ExitCode()
+			}
+			if code != 0 {
+				t.Fatalf("exit code = %d, want 0 (status must never fail)\nstdout: %s\nstderr: %s", code, stdout.String(), stderr.String())
+			}
+			if !strings.Contains(stdout.String(), tc.want) {
+				t.Errorf("stdout missing %q\nstdout: %s", tc.want, stdout.String())
+			}
+		})
+	}
+}
+
 func TestPublishHelpMakesNoNetworkCall(t *testing.T) {
 	var hits int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

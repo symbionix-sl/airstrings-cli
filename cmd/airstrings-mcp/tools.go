@@ -106,18 +106,30 @@ var toolDefs = []ToolDef{
 			},
 		},
 	},
+	{
+		Name:        "airstrings_promote_preview",
+		Description: "Read-only diff of what promoting strings from one environment to another would change (added, updated, and extra keys per locale). Applies nothing — a human reviews the diff and applies the promotion in the webapp.",
+		InputSchema: InputSchema{
+			Type: "object",
+			Properties: map[string]Property{
+				"source_env": {Type: "string", Description: "Source environment NAME. Defaults to the active environment if omitted."},
+				"target_env": {Type: "string", Description: "Target environment NAME. Defaults to the default environment if omitted."},
+			},
+		},
+	},
 }
 
 type toolHandler func(args json.RawMessage) *CallToolResult
 
 var toolHandlers = map[string]toolHandler{
-	"airstrings_init":        handleToolInit,
-	"airstrings_strings_set": handleToolStringsSet,
-	"airstrings_strings_rm":  handleToolStringsRm,
-	"airstrings_strings_ls":  handleToolStringsLs,
-	"airstrings_push":        handleToolPush,
-	"airstrings_pull":        handleToolPull,
-	"airstrings_publish":     handleToolPublish,
+	"airstrings_init":            handleToolInit,
+	"airstrings_strings_set":     handleToolStringsSet,
+	"airstrings_strings_rm":      handleToolStringsRm,
+	"airstrings_strings_ls":      handleToolStringsLs,
+	"airstrings_push":            handleToolPush,
+	"airstrings_pull":            handleToolPull,
+	"airstrings_publish":         handleToolPublish,
+	"airstrings_promote_preview": handleToolPromotePreview,
 }
 
 func handleToolInit(raw json.RawMessage) *CallToolResult {
@@ -476,6 +488,89 @@ func handleToolPublish(raw json.RawMessage) *CallToolResult {
 
 	out, _ := json.Marshal(resp)
 	return textResult(string(out))
+}
+
+func handleToolPromotePreview(raw json.RawMessage) *CallToolResult {
+	var args struct {
+		SourceEnv string `json:"source_env"`
+		TargetEnv string `json:"target_env"`
+	}
+	json.Unmarshal(raw, &args)
+
+	wsDir, err := workspace.Find()
+	if err != nil {
+		return errorResult(err.Error())
+	}
+
+	wsCfg, err := workspace.LoadConfig(wsDir)
+	if err != nil {
+		return errorResult(err.Error())
+	}
+
+	c, err := workspace.ResolveClient(wsCfg)
+	if err != nil {
+		return errorResult(err.Error())
+	}
+
+	envs, err := c.ListEnvironments()
+	if err != nil {
+		return errorResult(fmt.Sprintf("list environments: %s", err))
+	}
+
+	sourceID := c.EnvID()
+	if args.SourceEnv != "" {
+		id, errRes := resolveEnvID(envs, args.SourceEnv)
+		if errRes != nil {
+			return errRes
+		}
+		sourceID = id
+	}
+
+	targetID := ""
+	for _, e := range envs {
+		if e.IsDefault {
+			targetID = e.ID
+			break
+		}
+	}
+	if args.TargetEnv != "" {
+		id, errRes := resolveEnvID(envs, args.TargetEnv)
+		if errRes != nil {
+			return errRes
+		}
+		targetID = id
+	}
+
+	if sourceID == "" {
+		return errorResult("could not resolve source environment — pass source_env")
+	}
+	if targetID == "" {
+		return errorResult("could not resolve target environment — pass target_env")
+	}
+	if sourceID == targetID {
+		return errorResult("source and target are the same environment — pass an explicit source_env")
+	}
+
+	resp, err := c.PromotionPreview(sourceID, targetID)
+	if err != nil {
+		return errorResult(fmt.Sprintf("promotion preview: %s", err))
+	}
+
+	out, _ := json.Marshal(resp)
+	return textResult(string(out))
+}
+
+func resolveEnvID(envs []client.Environment, name string) (string, *CallToolResult) {
+	for _, e := range envs {
+		if strings.EqualFold(e.Name, name) || e.ID == name {
+			return e.ID, nil
+		}
+	}
+	var names []string
+	for _, e := range envs {
+		names = append(names, e.Name)
+	}
+	return "", errorResult(fmt.Sprintf("environment %q not found. Available: %s", name, strings.Join(names, ", ")))
 }
 
 func splitComma(s string) []string {
