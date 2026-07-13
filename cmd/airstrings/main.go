@@ -205,7 +205,7 @@ Flags:
 `,
 	"status": `Usage: airstrings status
 
-Show active project, environment, and key.
+Show active project, environment, key, and protection mode.
 `,
 	"project": `Usage: airstrings project
 
@@ -445,6 +445,66 @@ func switchEnv(wsCfg *workspace.WorkspaceConfig, name string) {
 	output.Errorf("environment %q not found. Available: %s", name, strings.Join(names, ", "))
 }
 
+// statusClient builds an API client the same way mustClient does (env-var auth
+// wins over the workspace) but never exits: any failure yields a nil client so
+// status can degrade instead of aborting.
+func statusClient() *client.Client {
+	if c, ok, err := workspace.ClientFromEnv(); ok {
+		if err != nil {
+			return nil
+		}
+		return c
+	}
+	wsDir, err := workspace.Find()
+	if err != nil {
+		return nil
+	}
+	wsCfg, err := workspace.LoadConfig(wsDir)
+	if err != nil {
+		return nil
+	}
+	c, err := workspace.ResolveClient(wsCfg)
+	if err != nil {
+		return nil
+	}
+	return c
+}
+
+// statusProtection reports the default environment's protection mode derived
+// from is_sealed: "protected" (sealed), "yolo" (unsealed), or "unknown" on any
+// auth, network, or API failure. Best-effort — it never fails.
+func statusProtection() string {
+	c := statusClient()
+	if c == nil {
+		return "unknown"
+	}
+	envs, err := c.ListEnvironments()
+	if err != nil {
+		return "unknown"
+	}
+	for _, e := range envs {
+		if e.IsDefault {
+			if e.IsSealed {
+				return "protected"
+			}
+			return "yolo"
+		}
+	}
+	return "unknown"
+}
+
+// protectionLine renders the human-readable protection descriptor.
+func protectionLine(p string) string {
+	switch p {
+	case "protected":
+		return "protected (production sealed — changes reach it via promote)"
+	case "yolo":
+		return "yolo (direct publish to production enabled)"
+	default:
+		return "unknown (API unreachable)"
+	}
+}
+
 func printStatus(wsDir string, wsCfg *workspace.WorkspaceConfig) {
 	cred, err := wsCfg.ActiveCredential()
 	if err != nil {
@@ -455,6 +515,8 @@ func printStatus(wsDir string, wsCfg *workspace.WorkspaceConfig) {
 	if url == "" {
 		url = "https://api.airstrings.com"
 	}
+
+	protection := statusProtection()
 
 	if output.JSONMode {
 		envs := make([]map[string]any, 0, len(wsCfg.Credentials))
@@ -474,6 +536,7 @@ func printStatus(wsDir string, wsCfg *workspace.WorkspaceConfig) {
 			"env_id":        cred.EnvID,
 			"env_name":      cred.EnvName,
 			"base_url":      url,
+			"protection":    protection,
 			"environments":  envs,
 		})
 		return
@@ -483,10 +546,13 @@ func printStatus(wsDir string, wsCfg *workspace.WorkspaceConfig) {
 	fmt.Printf("Env:      %s (%s)\n", cred.EnvName, cred.EnvID)
 	fmt.Printf("API URL:  %s\n", url)
 	fmt.Printf("Key:      %s...%s\n", cred.APIKey[:8], cred.APIKey[len(cred.APIKey)-4:])
+	fmt.Printf("Protection: %s\n", protectionLine(protection))
 }
 
 // printEnvStatus reports the credentials sourced from AIRSTRINGS_* env vars.
-// It stays offline: unresolved project/env are shown as resolved-on-first-call.
+// Unresolved project/env are shown as resolved-on-first-call. It makes one
+// best-effort API call to report the protection mode, degrading to "unknown"
+// rather than failing.
 func printEnvStatus(env workspace.EnvAuth) {
 	base := env.BaseURL
 	if base == "" {
@@ -497,12 +563,15 @@ func printEnvStatus(env workspace.EnvAuth) {
 		masked = masked[:8] + "..." + masked[len(masked)-4:]
 	}
 
+	protection := statusProtection()
+
 	if output.JSONMode {
 		output.JSON(map[string]any{
 			"source":     "env",
 			"project_id": env.ProjectID,
 			"env_id":     env.EnvID,
 			"base_url":   base,
+			"protection": protection,
 		})
 		return
 	}
@@ -520,6 +589,7 @@ func printEnvStatus(env workspace.EnvAuth) {
 	fmt.Printf("Env:      %s\n", envID)
 	fmt.Printf("API URL:  %s\n", base)
 	fmt.Printf("Key:      %s\n", masked)
+	fmt.Printf("Protection: %s\n", protectionLine(protection))
 }
 
 // --- Auth commands ---
