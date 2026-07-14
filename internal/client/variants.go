@@ -50,6 +50,12 @@ func (c *Client) DeleteExperiment(key string) error {
 	return c.do("DELETE", c.envPath()+"/strings/"+url.PathEscape(key)+"/experiment", nil, nil, nil)
 }
 
+func (c *Client) DeleteVariant(key, variant string) (*Experiment, error) {
+	var exp Experiment
+	err := c.do("DELETE", c.envPath()+"/strings/"+url.PathEscape(key)+"/experiment/variants/"+url.PathEscape(variant), nil, nil, &exp)
+	return &exp, err
+}
+
 func (c *Client) StartExperiment(key string) (*Experiment, error) {
 	var exp Experiment
 	err := c.do("POST", c.envPath()+"/strings/"+url.PathEscape(key)+"/experiment/start", nil, nil, &exp)

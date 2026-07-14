@@ -176,6 +176,7 @@ Variants (A/B experiments on a string):
   variants set <key> <variant> <locale>=<value>... Set a variant's text (text only)
   variants allocation <key> <variant>=<pct>...     Set the traffic split
   variants start|stop|status|rm <key>              Start/stop/inspect/delete
+  variants rm-variant <key> <variant>              Remove one variant (reallocated)
   variants promote <key> <variant>                 Promote a winning variant into the
                                                    base string (distinct from 'promote',
                                                    which promotes between environments)
@@ -315,7 +316,7 @@ Preview the pending string diff between two environments. Read-only — no write
 
 Only 'preview' is available.
 `,
-	"variants": `Usage: airstrings variants <create|set|allocation|start|stop|rm|status|promote> <key> [args]
+	"variants": `Usage: airstrings variants <create|set|allocation|start|stop|rm|rm-variant|status|promote> <key> [args]
 
 Manage an A/B experiment on a string. An experiment holds variant texts and a
 traffic allocation. Mutations edit the draft experiment — publish to apply the
@@ -333,6 +334,9 @@ change to the CDN.
                                           until the next publish)
   variants status <key>                   Show the experiment (404 → exit 4)
   variants rm <key>                       Delete the experiment
+  variants rm-variant <key> <variant>     Remove one non-control variant; its
+                                          allocation is redistributed across the
+                                          remaining arms
   variants promote <key> <variant>        Promote a winning variant into the
                                           base string and republish
 
@@ -1783,7 +1787,7 @@ func envDisplayName(envs []client.Environment, id string) string {
 
 func handleVariants(args []string) {
 	if len(args) == 0 {
-		output.Fail(output.ExitUsage, "usage: airstrings variants <create|set|allocation|start|stop|rm|status|promote> <key> [args]")
+		output.Fail(output.ExitUsage, "usage: airstrings variants <create|set|allocation|start|stop|rm|rm-variant|status|promote> <key> [args]")
 	}
 	sub, rest := args[0], args[1:]
 	switch sub {
@@ -1799,6 +1803,8 @@ func handleVariants(args []string) {
 		handleVariantsStop(rest)
 	case "rm":
 		handleVariantsRm(rest)
+	case "rm-variant":
+		handleVariantsRmVariant(rest)
 	case "status":
 		handleVariantsStatus(rest)
 	case "promote":
@@ -2001,6 +2007,39 @@ func handleVariantsRm(args []string) {
 		return
 	}
 	output.Success(fmt.Sprintf("Removed experiment for %s", key))
+}
+
+func handleVariantsRmVariant(args []string) {
+	usage := "usage: airstrings variants rm-variant <key> <variant>"
+	var pos []string
+	for _, a := range args {
+		if strings.HasPrefix(a, "-") {
+			output.Fail(output.ExitUsage, "unknown flag: %s", a)
+		}
+		pos = append(pos, a)
+	}
+	if len(pos) != 2 {
+		output.Fail(output.ExitUsage, usage)
+	}
+	key, variant := pos[0], pos[1]
+
+	c := mustClient()
+	exp, err := c.DeleteVariant(key, variant)
+	if err != nil {
+		failAPI("remove variant "+variant, err)
+	}
+	if output.JSONMode {
+		output.JSON(exp)
+		return
+	}
+	output.Success(fmt.Sprintf("Removed variant %q from %s", variant, key))
+	headers := []string{"VARIANT", "ALLOCATION"}
+	var rows [][]string
+	for _, name := range variantNames(exp) {
+		rows = append(rows, []string{name, fmt.Sprintf("%d%%", exp.Allocation[name])})
+	}
+	output.Table(headers, rows)
+	nudgePublish()
 }
 
 func handleVariantsStatus(args []string) {

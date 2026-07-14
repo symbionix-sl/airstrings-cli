@@ -110,6 +110,35 @@ func TestDeleteExperiment(t *testing.T) {
 	}
 }
 
+func TestDeleteVariant(t *testing.T) {
+	var gotMethod, gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		gotPath = r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(experimentBody))
+	}))
+	defer srv.Close()
+
+	c := New("test-key", srv.URL, "proj", "env")
+	exp, err := c.DeleteVariant("checkout.cta", "variant_a")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gotMethod != "DELETE" {
+		t.Errorf("expected DELETE, got %s", gotMethod)
+	}
+	if gotPath != "/v1/projects/proj/environments/env/strings/checkout.cta/experiment/variants/variant_a" {
+		t.Errorf("unexpected path: %q", gotPath)
+	}
+	if exp.ExperimentID != "exp_a1b2c3d4e5f6" {
+		t.Errorf("unexpected experiment: %+v", exp)
+	}
+	if exp.Allocation["variant_a"] != 50 {
+		t.Errorf("unexpected allocation: %+v", exp.Allocation)
+	}
+}
+
 func TestStartExperiment(t *testing.T) {
 	var gotMethod, gotPath string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
