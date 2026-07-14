@@ -8,6 +8,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/symbionix-sl/airstrings-cli/internal/bundlepull"
@@ -96,6 +98,8 @@ func main() {
 		handlePull(args)
 	case "promote":
 		handlePromote(args)
+	case "variants":
+		handleVariants(args)
 	case "mcp":
 		handleMCP(args)
 	case "profile":
@@ -166,6 +170,15 @@ Promote:
   promote preview [--from <env>] [--to <env>]
                           Preview the pending string diff between two environments
                           (defaults: from = active env, to = default env). Read-only.
+
+Variants (A/B experiments on a string):
+  variants create <key>                            Create an experiment (control 100%)
+  variants set <key> <variant> <locale>=<value>... Set a variant's text (text only)
+  variants allocation <key> <variant>=<pct>...     Set the traffic split
+  variants start|stop|status|rm <key>              Start/stop/inspect/delete
+  variants promote <key> <variant>                 Promote a winning variant into the
+                                                   base string (distinct from 'promote',
+                                                   which promotes between environments)
 
 Import:
   import csv <file>       Import strings from CSV file
@@ -301,6 +314,32 @@ Preview the pending string diff between two environments. Read-only — no write
   --to <env-name>     Target environment (default: default env)
 
 Only 'preview' is available.
+`,
+	"variants": `Usage: airstrings variants <create|set|allocation|start|stop|rm|status|promote> <key> [args]
+
+Manage an A/B experiment on a string. An experiment holds variant texts and a
+traffic allocation. Mutations edit the draft experiment — publish to apply the
+change to the CDN.
+
+  variants create <key>                   Create an experiment (control at 100%)
+  variants set <key> <variant> <locale>=<value>...
+                                          Set a variant's text for one or more
+                                          locales (text only; a new variant is
+                                          added to the allocation at 0%)
+  variants allocation <key> <variant>=<pct>...
+                                          Set the traffic split across variants
+  variants start <key>                    Start the experiment
+  variants stop <key>                     Stop the experiment (CDN is unchanged
+                                          until the next publish)
+  variants status <key>                   Show the experiment (404 → exit 4)
+  variants rm <key>                       Delete the experiment
+  variants promote <key> <variant>        Promote a winning variant into the
+                                          base string and republish
+
+'variants promote' promotes a winning variant into the base string. This is
+different from 'airstrings promote', which promotes strings between environments.
+
+There is no experiment name (no --name) and no format flag (text only).
 `,
 	"push": `Usage: airstrings push [--section <name>]
 
@@ -1738,6 +1777,307 @@ func envDisplayName(envs []client.Environment, id string) string {
 		}
 	}
 	return id
+}
+
+// --- Variants (A/B experiment) commands ---
+
+func handleVariants(args []string) {
+	if len(args) == 0 {
+		output.Fail(output.ExitUsage, "usage: airstrings variants <create|set|allocation|start|stop|rm|status|promote> <key> [args]")
+	}
+	sub, rest := args[0], args[1:]
+	switch sub {
+	case "create":
+		handleVariantsCreate(rest)
+	case "set":
+		handleVariantsSet(rest)
+	case "allocation":
+		handleVariantsAllocation(rest)
+	case "start":
+		handleVariantsStart(rest)
+	case "stop":
+		handleVariantsStop(rest)
+	case "rm":
+		handleVariantsRm(rest)
+	case "status":
+		handleVariantsStatus(rest)
+	case "promote":
+		handleVariantsPromote(rest)
+	default:
+		output.Fail(output.ExitUsage, "unknown variants command: %s", sub)
+	}
+}
+
+func variantsKey(args []string, usage string) string {
+	key := ""
+	for _, a := range args {
+		if strings.HasPrefix(a, "-") {
+			output.Fail(output.ExitUsage, "unknown flag: %s", a)
+		}
+		if key != "" {
+			output.Fail(output.ExitUsage, "usage: %s", usage)
+		}
+		key = a
+	}
+	if key == "" {
+		output.Fail(output.ExitUsage, "usage: %s", usage)
+	}
+	return key
+}
+
+func nudgePublish() {
+	fmt.Println("Publish to apply the change to the CDN: airstrings publish")
+}
+
+func handleVariantsCreate(args []string) {
+	key := variantsKey(args, "airstrings variants create <key>")
+	c := mustClient()
+	exp, err := c.PutExperiment(key, map[string]int{"control": 100}, map[string]map[string]string{})
+	if err != nil {
+		failAPI("create experiment "+key, err)
+	}
+	if output.JSONMode {
+		output.JSON(exp)
+		return
+	}
+	output.Success(fmt.Sprintf("Created experiment for %s (control at 100%%)", key))
+}
+
+func handleVariantsSet(args []string) {
+	usage := "usage: airstrings variants set <key> <variant> <locale>=<value>..."
+	if len(args) < 3 {
+		output.Fail(output.ExitUsage, usage)
+	}
+	for _, a := range args[:2] {
+		if strings.HasPrefix(a, "-") {
+			output.Fail(output.ExitUsage, "unknown flag: %s", a)
+		}
+	}
+	key, variant := args[0], args[1]
+	values := make(map[string]string)
+	for i := 2; i < len(args); i++ {
+		if strings.HasPrefix(args[i], "-") {
+			output.Fail(output.ExitUsage, "unknown flag: %s", args[i])
+		}
+		parts := strings.SplitN(args[i], "=", 2)
+		if len(parts) != 2 {
+			output.Fail(output.ExitUsage, "invalid format %q — expected locale=value", args[i])
+		}
+		values[parts[0]] = parts[1]
+	}
+	if len(values) == 0 {
+		output.Fail(output.ExitUsage, "at least one locale=value pair is required")
+	}
+
+	c := mustClient()
+	exp, err := c.GetExperiment(key)
+	if err != nil {
+		failAPI("get experiment "+key, err)
+	}
+
+	allocation := exp.Allocation
+	if allocation == nil {
+		allocation = map[string]int{}
+	}
+	if _, ok := allocation[variant]; !ok {
+		allocation[variant] = 0
+	}
+	variants := exp.Variants
+	if variants == nil {
+		variants = map[string]map[string]string{}
+	}
+	if variants[variant] == nil {
+		variants[variant] = map[string]string{}
+	}
+	for loc, val := range values {
+		variants[variant][loc] = val
+	}
+
+	updated, err := c.PutExperiment(key, allocation, variants)
+	if err != nil {
+		failAPI("update experiment "+key, err)
+	}
+	if output.JSONMode {
+		output.JSON(updated)
+		return
+	}
+	output.Success(fmt.Sprintf("Set variant %q on %s — %d locale(s)", variant, key, len(values)))
+	nudgePublish()
+}
+
+func handleVariantsAllocation(args []string) {
+	usage := "usage: airstrings variants allocation <key> <variant>=<pct>..."
+	if len(args) < 2 {
+		output.Fail(output.ExitUsage, usage)
+	}
+	if strings.HasPrefix(args[0], "-") {
+		output.Fail(output.ExitUsage, "unknown flag: %s", args[0])
+	}
+	key := args[0]
+	pcts := make(map[string]int)
+	for i := 1; i < len(args); i++ {
+		if strings.HasPrefix(args[i], "-") {
+			output.Fail(output.ExitUsage, "unknown flag: %s", args[i])
+		}
+		parts := strings.SplitN(args[i], "=", 2)
+		if len(parts) != 2 {
+			output.Fail(output.ExitUsage, "invalid format %q — expected variant=pct", args[i])
+		}
+		pct, err := strconv.Atoi(parts[1])
+		if err != nil {
+			output.Fail(output.ExitUsage, "invalid percentage %q — expected an integer", parts[1])
+		}
+		pcts[parts[0]] = pct
+	}
+	if len(pcts) == 0 {
+		output.Fail(output.ExitUsage, "at least one variant=pct pair is required")
+	}
+
+	c := mustClient()
+	exp, err := c.GetExperiment(key)
+	if err != nil {
+		failAPI("get experiment "+key, err)
+	}
+	allocation := exp.Allocation
+	if allocation == nil {
+		allocation = map[string]int{}
+	}
+	for v, p := range pcts {
+		allocation[v] = p
+	}
+	variants := exp.Variants
+	if variants == nil {
+		variants = map[string]map[string]string{}
+	}
+
+	updated, err := c.PutExperiment(key, allocation, variants)
+	if err != nil {
+		failAPI("update experiment "+key, err)
+	}
+	if output.JSONMode {
+		output.JSON(updated)
+		return
+	}
+	output.Success(fmt.Sprintf("Updated allocation for %s", key))
+}
+
+func handleVariantsStart(args []string) {
+	key := variantsKey(args, "airstrings variants start <key>")
+	c := mustClient()
+	exp, err := c.StartExperiment(key)
+	if err != nil {
+		failAPI("start experiment "+key, err)
+	}
+	if output.JSONMode {
+		output.JSON(exp)
+		return
+	}
+	output.Success(fmt.Sprintf("Started experiment for %s", key))
+}
+
+func handleVariantsStop(args []string) {
+	key := variantsKey(args, "airstrings variants stop <key>")
+	c := mustClient()
+	exp, err := c.StopExperiment(key)
+	if err != nil {
+		failAPI("stop experiment "+key, err)
+	}
+	if output.JSONMode {
+		output.JSON(exp)
+		return
+	}
+	output.Success(fmt.Sprintf("Stopped experiment for %s", key))
+	nudgePublish()
+}
+
+func handleVariantsRm(args []string) {
+	key := variantsKey(args, "airstrings variants rm <key>")
+	c := mustClient()
+	if err := c.DeleteExperiment(key); err != nil {
+		failAPI("remove experiment "+key, err)
+	}
+	if output.JSONMode {
+		output.JSON(map[string]any{"key": key, "deleted": true})
+		return
+	}
+	output.Success(fmt.Sprintf("Removed experiment for %s", key))
+}
+
+func handleVariantsStatus(args []string) {
+	key := variantsKey(args, "airstrings variants status <key>")
+	c := mustClient()
+	exp, err := c.GetExperiment(key)
+	if err != nil {
+		failAPI("get experiment "+key, err)
+	}
+	if output.JSONMode {
+		output.JSON(exp)
+		return
+	}
+	fmt.Printf("Experiment %s — status: %s\n", exp.Key, exp.Status)
+	headers := []string{"VARIANT", "ALLOCATION", "LOCALES"}
+	var rows [][]string
+	for _, name := range variantNames(exp) {
+		rows = append(rows, []string{name, fmt.Sprintf("%d%%", exp.Allocation[name]), fmt.Sprintf("%d", len(exp.Variants[name]))})
+	}
+	output.Table(headers, rows)
+}
+
+func handleVariantsPromote(args []string) {
+	usage := "usage: airstrings variants promote <key> <variant>"
+	var pos []string
+	for _, a := range args {
+		if strings.HasPrefix(a, "-") {
+			output.Fail(output.ExitUsage, "unknown flag: %s", a)
+		}
+		pos = append(pos, a)
+	}
+	if len(pos) != 2 {
+		output.Fail(output.ExitUsage, usage)
+	}
+	key, variant := pos[0], pos[1]
+
+	c := mustClient()
+	resp, err := c.PromoteVariant(key, variant)
+	if err != nil {
+		failAPI("promote variant "+variant, err)
+	}
+	if output.JSONMode {
+		output.JSON(resp)
+		return
+	}
+	output.Success(fmt.Sprintf("Promoted variant %q on %s into the base string", variant, key))
+	if len(resp.PublishResults) > 0 {
+		headers := []string{"LOCALE", "STATUS"}
+		var rows [][]string
+		for _, p := range resp.PublishResults {
+			s := p.Status
+			if p.Error != "" {
+				s += " (" + p.Error + ")"
+			}
+			rows = append(rows, []string{p.Locale, s})
+		}
+		output.Table(headers, rows)
+	}
+}
+
+func variantNames(exp *client.Experiment) []string {
+	seen := map[string]bool{}
+	var names []string
+	for name := range exp.Allocation {
+		if !seen[name] {
+			seen[name] = true
+			names = append(names, name)
+		}
+	}
+	for name := range exp.Variants {
+		if !seen[name] {
+			seen[name] = true
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+	return names
 }
 
 // --- Locale commands ---
