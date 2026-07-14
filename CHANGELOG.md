@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.13.0] - 2026-07-14
+
+### Added
+
+- `airstrings variants` — manage an A/B experiment on a string: `create`, `set`, `allocation`, `start`, `stop`, `status`, `rm`, and `promote`. An experiment splits traffic across candidate variant values and reports live status.
+- MCP tools `airstrings_variant_set`, `airstrings_variant_status`, `airstrings_variant_start`, `airstrings_variant_stop`, and `airstrings_variant_promote` exposing the variant workflow to agents without shell access.
+- A `variants` operation targeting a sealed/protected production experiment returns `403` → exit code `3` (auth), consistent with the existing publish/import protection.
+- `variants promote` promotes the winning variant's value into the base string in place — distinct from `airstrings promote` (environment promotion), which promotes strings from one environment to another.
+
 ## [0.12.0] - 2026-07-13
 
 ### Added

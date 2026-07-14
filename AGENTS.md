@@ -81,6 +81,13 @@ airstrings publish [locale...]         # sign + publish bundles to the CDN
 airstrings bundles                     # list published bundles
 airstrings bundles pull [dir]          # download signed bundles for offline fallback
 airstrings promote preview [--from <env>] [--to <env>]  # preview env→env string diff (read-only)
+airstrings variants create <key>                        # create an A/B experiment on a string
+airstrings variants set <key> <name> en="…" [--format text|icu]  # add/update a variant value
+airstrings variants allocation <key> <name>=<pct> ...   # split traffic across the experiment's variants
+airstrings variants start|stop <key>                    # start / stop serving the experiment
+airstrings variants status <key>                        # experiment state + per-variant allocation
+airstrings variants promote <key> <name>                # promote the winning variant into the base string
+airstrings variants rm <key>                            # delete the experiment
 airstrings import csv <file> | status <id>
 airstrings apikey rotate [--env name]
 ```
