@@ -108,6 +108,11 @@ func TestMCP_ToolsList(t *testing.T) {
 		"airstrings_pull":            false,
 		"airstrings_publish":         false,
 		"airstrings_promote_preview": false,
+		"airstrings_variant_set":     false,
+		"airstrings_variant_status":  false,
+		"airstrings_variant_start":   false,
+		"airstrings_variant_stop":    false,
+		"airstrings_variant_promote": false,
 	}
 
 	for _, tool := range toolsList.Tools {
@@ -783,5 +788,122 @@ func TestMCP_ToolCall_PushWithoutCredentials(t *testing.T) {
 	resp := mcpExchange(t, server, "tools/list", 19, map[string]any{})
 	if resp.Error != nil {
 		t.Fatalf("server stopped responding after failed push: %+v", resp.Error)
+	}
+}
+
+func TestMCP_ToolCall_Variants_HappyPath(t *testing.T) {
+	srv, recorded := recordingServer(t)
+	setupPushWorkspace(t, srv.URL)
+
+	server := &MCPServer{}
+
+	cases := []struct {
+		name string
+		tool string
+		args map[string]any
+		want string
+	}{
+		{
+			name: "variant_set",
+			tool: "airstrings_variant_set",
+			args: map[string]any{
+				"key":        "greeting",
+				"allocation": map[string]any{"control": 50, "treatment": 50},
+				"variants": map[string]any{
+					"control":   map[string]any{"en": "Hello"},
+					"treatment": map[string]any{"en": "Hi"},
+				},
+			},
+			want: "PUT /v1/projects/p/environments/e/strings/greeting/experiment",
+		},
+		{
+			name: "variant_status",
+			tool: "airstrings_variant_status",
+			args: map[string]any{"key": "greeting"},
+			want: "GET /v1/projects/p/environments/e/strings/greeting/experiment",
+		},
+		{
+			name: "variant_start",
+			tool: "airstrings_variant_start",
+			args: map[string]any{"key": "greeting"},
+			want: "POST /v1/projects/p/environments/e/strings/greeting/experiment/start",
+		},
+		{
+			name: "variant_stop",
+			tool: "airstrings_variant_stop",
+			args: map[string]any{"key": "greeting"},
+			want: "POST /v1/projects/p/environments/e/strings/greeting/experiment/stop",
+		},
+		{
+			name: "variant_promote",
+			tool: "airstrings_variant_promote",
+			args: map[string]any{"key": "greeting", "variant": "treatment"},
+			want: "POST /v1/projects/p/environments/e/strings/greeting/experiment/promote",
+		},
+	}
+
+	for i, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			result := callTool(t, server, 20+i, tc.tool, tc.args)
+			if result.IsError {
+				t.Fatalf("tool returned error: %s", result.Content[0].Text)
+			}
+		})
+	}
+
+	got := make(map[string]bool)
+	for _, r := range recorded() {
+		got[r] = true
+	}
+	for _, tc := range cases {
+		if !got[tc.want] {
+			t.Errorf("expected request %q not recorded; got %v", tc.want, got)
+		}
+	}
+}
+
+func TestMCP_ToolCall_Variants_MissingKey(t *testing.T) {
+	dir := t.TempDir()
+	workspace.Init(dir, workspace.WorkspaceConfig{ProjectID: "p", ActiveEnv: "e"})
+
+	origDir, _ := os.Getwd()
+	os.Chdir(dir)
+	defer os.Chdir(origDir)
+
+	server := &MCPServer{}
+	tools := []string{
+		"airstrings_variant_set",
+		"airstrings_variant_status",
+		"airstrings_variant_start",
+		"airstrings_variant_stop",
+		"airstrings_variant_promote",
+	}
+	for i, tool := range tools {
+		t.Run(tool, func(t *testing.T) {
+			result := callTool(t, server, 30+i, tool, map[string]any{})
+			if !result.IsError {
+				t.Errorf("expected isError=true when key is missing for %s", tool)
+			}
+		})
+	}
+}
+
+func TestMCP_ToolCall_Variant_Forbidden(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusForbidden)
+		w.Write([]byte(`{"error":{"code":"sealed_environment","message":"production is protected"}}`))
+	}))
+	defer srv.Close()
+
+	setupPushWorkspace(t, srv.URL)
+
+	server := &MCPServer{}
+	result := callTool(t, server, 40, "airstrings_variant_start", map[string]any{"key": "greeting"})
+	if !result.IsError {
+		t.Fatalf("expected isError=true on API 403, got: %s", result.Content[0].Text)
+	}
+	if !strings.Contains(result.Content[0].Text, "403") {
+		t.Errorf("expected 403 in error text, got %q", result.Content[0].Text)
 	}
 }

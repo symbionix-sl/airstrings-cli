@@ -117,6 +117,64 @@ var toolDefs = []ToolDef{
 			},
 		},
 	},
+	{
+		Name:        "airstrings_variant_set",
+		Description: "Create or replace the A/B experiment for a string key in the active environment. Replaces the whole experiment: allocation maps each variant name to an integer weight, variants maps each variant name to an object of locale=value pairs.",
+		InputSchema: InputSchema{
+			Type: "object",
+			Properties: map[string]Property{
+				"key":        {Type: "string", Description: "The string key the experiment belongs to (e.g., 'onboarding.welcome')."},
+				"allocation": {Type: "object", Description: "Object mapping variant name to integer weight, e.g. {\"control\": 50, \"treatment\": 50}."},
+				"variants":   {Type: "object", Description: "Object mapping variant name to an object of locale=value pairs, e.g. {\"control\": {\"en\": \"Hello\"}, \"treatment\": {\"en\": \"Hi\"}}."},
+			},
+			Required: []string{"key"},
+		},
+	},
+	{
+		Name:        "airstrings_variant_status",
+		Description: "Get the current A/B experiment for a string key in the active environment (status, allocation, variants).",
+		InputSchema: InputSchema{
+			Type: "object",
+			Properties: map[string]Property{
+				"key": {Type: "string", Description: "The string key whose experiment to read."},
+			},
+			Required: []string{"key"},
+		},
+	},
+	{
+		Name:        "airstrings_variant_start",
+		Description: "Start the A/B experiment for a string key so its variants are served. If the active environment is protected production, the server will refuse — start the experiment in a writable environment instead. Does not promise success.",
+		InputSchema: InputSchema{
+			Type: "object",
+			Properties: map[string]Property{
+				"key": {Type: "string", Description: "The string key whose experiment to start."},
+			},
+			Required: []string{"key"},
+		},
+	},
+	{
+		Name:        "airstrings_variant_stop",
+		Description: "Stop the A/B experiment for a string key. Serving reverts to the base string.",
+		InputSchema: InputSchema{
+			Type: "object",
+			Properties: map[string]Property{
+				"key": {Type: "string", Description: "The string key whose experiment to stop."},
+			},
+			Required: []string{"key"},
+		},
+	},
+	{
+		Name:        "airstrings_variant_promote",
+		Description: "Promote one variant of a string's experiment to become the published value. If the active environment is protected production, the server will refuse — promote in a writable environment instead. Does not promise success.",
+		InputSchema: InputSchema{
+			Type: "object",
+			Properties: map[string]Property{
+				"key":     {Type: "string", Description: "The string key whose experiment to promote."},
+				"variant": {Type: "string", Description: "The variant name to promote to the winning value."},
+			},
+			Required: []string{"key", "variant"},
+		},
+	},
 }
 
 type toolHandler func(args json.RawMessage) *CallToolResult
@@ -130,6 +188,11 @@ var toolHandlers = map[string]toolHandler{
 	"airstrings_pull":            handleToolPull,
 	"airstrings_publish":         handleToolPublish,
 	"airstrings_promote_preview": handleToolPromotePreview,
+	"airstrings_variant_set":     handleToolVariantSet,
+	"airstrings_variant_status":  handleToolVariantStatus,
+	"airstrings_variant_start":   handleToolVariantStart,
+	"airstrings_variant_stop":    handleToolVariantStop,
+	"airstrings_variant_promote": handleToolVariantPromote,
 }
 
 func handleToolInit(raw json.RawMessage) *CallToolResult {
@@ -554,6 +617,182 @@ func handleToolPromotePreview(raw json.RawMessage) *CallToolResult {
 	resp, err := c.PromotionPreview(sourceID, targetID)
 	if err != nil {
 		return errorResult(fmt.Sprintf("promotion preview: %s", err))
+	}
+
+	out, _ := json.Marshal(resp)
+	return textResult(string(out))
+}
+
+func handleToolVariantSet(raw json.RawMessage) *CallToolResult {
+	var args struct {
+		Key        string                       `json:"key"`
+		Allocation map[string]int               `json:"allocation"`
+		Variants   map[string]map[string]string `json:"variants"`
+	}
+	json.Unmarshal(raw, &args)
+
+	if args.Key == "" {
+		return errorResult("key is required")
+	}
+
+	wsDir, err := workspace.Find()
+	if err != nil {
+		return errorResult(err.Error())
+	}
+
+	wsCfg, err := workspace.LoadConfig(wsDir)
+	if err != nil {
+		return errorResult(err.Error())
+	}
+
+	c, err := workspace.ResolveClient(wsCfg)
+	if err != nil {
+		return errorResult(err.Error())
+	}
+
+	exp, err := c.PutExperiment(args.Key, args.Allocation, args.Variants)
+	if err != nil {
+		return errorResult(fmt.Sprintf("variant set: %s", err))
+	}
+
+	out, _ := json.Marshal(exp)
+	return textResult(string(out))
+}
+
+func handleToolVariantStatus(raw json.RawMessage) *CallToolResult {
+	var args struct {
+		Key string `json:"key"`
+	}
+	json.Unmarshal(raw, &args)
+
+	if args.Key == "" {
+		return errorResult("key is required")
+	}
+
+	wsDir, err := workspace.Find()
+	if err != nil {
+		return errorResult(err.Error())
+	}
+
+	wsCfg, err := workspace.LoadConfig(wsDir)
+	if err != nil {
+		return errorResult(err.Error())
+	}
+
+	c, err := workspace.ResolveClient(wsCfg)
+	if err != nil {
+		return errorResult(err.Error())
+	}
+
+	exp, err := c.GetExperiment(args.Key)
+	if err != nil {
+		return errorResult(fmt.Sprintf("variant status: %s", err))
+	}
+
+	out, _ := json.Marshal(exp)
+	return textResult(string(out))
+}
+
+func handleToolVariantStart(raw json.RawMessage) *CallToolResult {
+	var args struct {
+		Key string `json:"key"`
+	}
+	json.Unmarshal(raw, &args)
+
+	if args.Key == "" {
+		return errorResult("key is required")
+	}
+
+	wsDir, err := workspace.Find()
+	if err != nil {
+		return errorResult(err.Error())
+	}
+
+	wsCfg, err := workspace.LoadConfig(wsDir)
+	if err != nil {
+		return errorResult(err.Error())
+	}
+
+	c, err := workspace.ResolveClient(wsCfg)
+	if err != nil {
+		return errorResult(err.Error())
+	}
+
+	exp, err := c.StartExperiment(args.Key)
+	if err != nil {
+		return errorResult(fmt.Sprintf("variant start: %s", err))
+	}
+
+	out, _ := json.Marshal(exp)
+	return textResult(string(out))
+}
+
+func handleToolVariantStop(raw json.RawMessage) *CallToolResult {
+	var args struct {
+		Key string `json:"key"`
+	}
+	json.Unmarshal(raw, &args)
+
+	if args.Key == "" {
+		return errorResult("key is required")
+	}
+
+	wsDir, err := workspace.Find()
+	if err != nil {
+		return errorResult(err.Error())
+	}
+
+	wsCfg, err := workspace.LoadConfig(wsDir)
+	if err != nil {
+		return errorResult(err.Error())
+	}
+
+	c, err := workspace.ResolveClient(wsCfg)
+	if err != nil {
+		return errorResult(err.Error())
+	}
+
+	exp, err := c.StopExperiment(args.Key)
+	if err != nil {
+		return errorResult(fmt.Sprintf("variant stop: %s", err))
+	}
+
+	out, _ := json.Marshal(exp)
+	return textResult(string(out))
+}
+
+func handleToolVariantPromote(raw json.RawMessage) *CallToolResult {
+	var args struct {
+		Key     string `json:"key"`
+		Variant string `json:"variant"`
+	}
+	json.Unmarshal(raw, &args)
+
+	if args.Key == "" {
+		return errorResult("key is required")
+	}
+	if args.Variant == "" {
+		return errorResult("variant is required")
+	}
+
+	wsDir, err := workspace.Find()
+	if err != nil {
+		return errorResult(err.Error())
+	}
+
+	wsCfg, err := workspace.LoadConfig(wsDir)
+	if err != nil {
+		return errorResult(err.Error())
+	}
+
+	c, err := workspace.ResolveClient(wsCfg)
+	if err != nil {
+		return errorResult(err.Error())
+	}
+
+	resp, err := c.PromoteVariant(args.Key, args.Variant)
+	if err != nil {
+		return errorResult(fmt.Sprintf("variant promote: %s", err))
 	}
 
 	out, _ := json.Marshal(resp)
