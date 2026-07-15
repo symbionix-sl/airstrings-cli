@@ -1,6 +1,6 @@
 {
-  "name": "airstrings",
-  "version": "0.13.3",
+  "name": "@airstrings/cli",
+  "version": "0.13.4",
   "description": "CLI for the AirStrings remote string management platform",
   "homepage": "https://airstrings.com",
   "license": "MIT",

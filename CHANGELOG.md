@@ -5,11 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.13.3] - 2026-07-15
+## [0.13.4] - 2026-07-15
 
 ### Added
 
-- Install from npm: `npx airstrings <command>`, or `npm install -g airstrings`. The package downloads the prebuilt binary for your platform on install and verifies it against the `SHA256SUMS` published with each release, refusing to install on mismatch. Requires Node 18+.
+- Install from npm: `npx @airstrings/cli <command>`, or `npm install -g @airstrings/cli`. The installed commands are `airstrings` and `airstrings-mcp` — only the package name is scoped. The package downloads the prebuilt binary for your platform on install and verifies it against the `SHA256SUMS` published with each release, refusing to install on mismatch. Requires Node 18+.
 
 ## [0.13.2] - 2026-07-15
 
