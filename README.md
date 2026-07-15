@@ -4,17 +4,24 @@ Command-line interface for [AirStrings](https://airstrings.com) — manage strin
 
 ## Install
 
+### npm (any platform)
+
+```bash
+npm install -g @airstrings/cli
+```
+
+Or run without installing:
+
+```bash
+npx @airstrings/cli <command>
+```
+
+Requires Node 18+. Installs `airstrings` and `airstrings-mcp`.
+
 ### Homebrew (macOS / Linux)
 
 ```bash
 brew install symbionix-sl/airstrings/airstrings
-```
-
-### Scoop (Windows)
-
-```powershell
-scoop bucket add airstrings https://github.com/symbionix-sl/homebrew-airstrings
-scoop install airstrings
 ```
 
 ### From source

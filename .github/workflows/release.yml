@@ -169,7 +169,7 @@ jobs:
           VERSION="${GITHUB_REF_NAME#v}"
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
 
-          for file in artifacts/*.tar.gz artifacts/*.zip; do
+          for file in artifacts/*.tar.gz; do
             name=$(basename "$file")
             sha=$(shasum -a 256 "$file" | awk '{print $1}')
 
@@ -181,12 +181,10 @@ jobs:
               echo "sha_linux_arm64=${sha}" >> "$GITHUB_OUTPUT"
             elif [[ "$name" == *linux-amd64* ]]; then
               echo "sha_linux_amd64=${sha}" >> "$GITHUB_OUTPUT"
-            elif [[ "$name" == *windows-amd64* ]]; then
-              echo "sha_windows_amd64=${sha}" >> "$GITHUB_OUTPUT"
             fi
           done
 
-      - name: Update Homebrew formula and Scoop manifest
+      - name: Update Homebrew formula
         env:
           GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
           VERSION: ${{ steps.sha.outputs.version }}
@@ -194,7 +192,6 @@ jobs:
           SHA_DARWIN_AMD64: ${{ steps.sha.outputs.sha_darwin_amd64 }}
           SHA_LINUX_ARM64: ${{ steps.sha.outputs.sha_linux_arm64 }}
           SHA_LINUX_AMD64: ${{ steps.sha.outputs.sha_linux_amd64 }}
-          SHA_WINDOWS_AMD64: ${{ steps.sha.outputs.sha_windows_amd64 }}
         run: |
           git clone "https://x-access-token:${GH_TOKEN}@github.com/symbionix-sl/homebrew-airstrings.git" tap
           cd tap
@@ -242,29 +239,9 @@ jobs:
           end
           RUBY
 
-          mkdir -p bucket
-          cat > bucket/airstrings.json << JSON
-          {
-              "version": "${VERSION}",
-              "description": "CLI for the AirStrings remote string management platform",
-              "homepage": "https://airstrings.com",
-              "license": "MIT",
-              "architecture": {
-                  "64bit": {
-                      "url": "${BASE_URL}/airstrings-v${VERSION}-windows-amd64.zip",
-                      "hash": "${SHA_WINDOWS_AMD64}"
-                  }
-              },
-              "bin": [
-                  "airstrings.exe",
-                  "airstrings-mcp.exe"
-              ]
-          }
-          JSON
-
           # Remove leading whitespace from heredoc indentation
-          sed -i 's/^          //' Formula/airstrings.rb bucket/airstrings.json
+          sed -i 's/^          //' Formula/airstrings.rb
 
-          git add Formula/airstrings.rb bucket/airstrings.json
+          git add Formula/airstrings.rb
           git commit -m "Update airstrings to ${VERSION}"
           git push origin main
