@@ -89,6 +89,12 @@ jobs:
           path: artifacts
           merge-multiple: true
 
+      - name: Generate checksums
+        run: |
+          cd artifacts
+          shasum -a 256 *.tar.gz *.zip > SHA256SUMS
+          cat SHA256SUMS
+
       - name: Create GitHub Release (private repo)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -96,7 +102,7 @@ jobs:
           gh release create "$GITHUB_REF_NAME" \
             --title "$GITHUB_REF_NAME" \
             --generate-notes \
-            artifacts/*.tar.gz artifacts/*.zip
+            artifacts/*.tar.gz artifacts/*.zip artifacts/SHA256SUMS
 
       - name: Upload release assets to public tap repo
         env:
@@ -109,11 +115,42 @@ jobs:
             --repo symbionix-sl/homebrew-airstrings \
             --title "${VERSION}" \
             --notes "AirStrings CLI ${VERSION}" \
-            artifacts/*.tar.gz artifacts/*.zip || \
+            artifacts/*.tar.gz artifacts/*.zip artifacts/SHA256SUMS || \
           gh release upload "${VERSION}" \
             --repo symbionix-sl/homebrew-airstrings \
             --clobber \
-            artifacts/*.tar.gz artifacts/*.zip
+            artifacts/*.tar.gz artifacts/*.zip artifacts/SHA256SUMS
+
+  publish-npm:
+    needs: release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Check npm version matches tag
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          PKG=$(node -p "require('./npm/package.json').version")
+          if [ "$PKG" != "$VERSION" ]; then
+            echo "::error::npm/package.json version ($PKG) != release tag ($VERSION) — bump npm/package.json before tagging."
+            exit 1
+          fi
+
+      - name: Test wrapper
+        working-directory: npm
+        run: node test.js
+
+      - name: Publish to npm (Trusted Publishing via OIDC)
+        working-directory: npm
+        run: npm publish --access public
 
   update-tap:
     needs: release
