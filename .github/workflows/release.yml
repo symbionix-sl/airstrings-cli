@@ -25,6 +25,8 @@ jobs:
             goarch: arm64
           - goos: linux
             goarch: amd64
+          - goos: windows
+            goarch: amd64
     steps:
       - uses: actions/checkout@v6
 
@@ -49,16 +51,24 @@ jobs:
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
           LDFLAGS="-s -w -X main.version=${VERSION}"
+          EXT=""
+          if [ "${GOOS}" = "windows" ]; then EXT=".exe"; fi
           mkdir -p dist
 
-          go build -ldflags="${LDFLAGS}" -o dist/airstrings ./cmd/airstrings
-          go build -ldflags="${LDFLAGS}" -o dist/airstrings-mcp ./cmd/airstrings-mcp
+          go build -ldflags="${LDFLAGS}" -o "dist/airstrings${EXT}" ./cmd/airstrings
+          go build -ldflags="${LDFLAGS}" -o "dist/airstrings-mcp${EXT}" ./cmd/airstrings-mcp
 
-      - name: Create tarball
+      - name: Create archive
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          ARCHIVE="airstrings-v${VERSION}-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz"
-          tar -czf "${ARCHIVE}" -C dist airstrings airstrings-mcp
+          BASE="airstrings-v${VERSION}-${{ matrix.goos }}-${{ matrix.goarch }}"
+          if [ "${{ matrix.goos }}" = "windows" ]; then
+            ARCHIVE="${BASE}.zip"
+            (cd dist && zip -q "../${ARCHIVE}" airstrings.exe airstrings-mcp.exe)
+          else
+            ARCHIVE="${BASE}.tar.gz"
+            tar -czf "${ARCHIVE}" -C dist airstrings airstrings-mcp
+          fi
           echo "ARCHIVE=${ARCHIVE}" >> "$GITHUB_ENV"
 
       - name: Upload artifact
@@ -86,7 +96,7 @@ jobs:
           gh release create "$GITHUB_REF_NAME" \
             --title "$GITHUB_REF_NAME" \
             --generate-notes \
-            artifacts/*.tar.gz
+            artifacts/*.tar.gz artifacts/*.zip
 
       - name: Upload release assets to public tap repo
         env:
@@ -99,11 +109,11 @@ jobs:
             --repo symbionix-sl/homebrew-airstrings \
             --title "${VERSION}" \
             --notes "AirStrings CLI ${VERSION}" \
-            artifacts/*.tar.gz || \
+            artifacts/*.tar.gz artifacts/*.zip || \
           gh release upload "${VERSION}" \
             --repo symbionix-sl/homebrew-airstrings \
             --clobber \
-            artifacts/*.tar.gz
+            artifacts/*.tar.gz artifacts/*.zip
 
   update-tap:
     needs: release
@@ -121,7 +131,7 @@ jobs:
           VERSION="${GITHUB_REF_NAME#v}"
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
 
-          for file in artifacts/*.tar.gz; do
+          for file in artifacts/*.tar.gz artifacts/*.zip; do
             name=$(basename "$file")
             sha=$(shasum -a 256 "$file" | awk '{print $1}')
 
@@ -133,10 +143,12 @@ jobs:
               echo "sha_linux_arm64=${sha}" >> "$GITHUB_OUTPUT"
             elif [[ "$name" == *linux-amd64* ]]; then
               echo "sha_linux_amd64=${sha}" >> "$GITHUB_OUTPUT"
+            elif [[ "$name" == *windows-amd64* ]]; then
+              echo "sha_windows_amd64=${sha}" >> "$GITHUB_OUTPUT"
             fi
           done
 
-      - name: Update Homebrew formula
+      - name: Update Homebrew formula and Scoop manifest
         env:
           GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
           VERSION: ${{ steps.sha.outputs.version }}
@@ -144,6 +156,7 @@ jobs:
           SHA_DARWIN_AMD64: ${{ steps.sha.outputs.sha_darwin_amd64 }}
           SHA_LINUX_ARM64: ${{ steps.sha.outputs.sha_linux_arm64 }}
           SHA_LINUX_AMD64: ${{ steps.sha.outputs.sha_linux_amd64 }}
+          SHA_WINDOWS_AMD64: ${{ steps.sha.outputs.sha_windows_amd64 }}
         run: |
           git clone "https://x-access-token:${GH_TOKEN}@github.com/symbionix-sl/homebrew-airstrings.git" tap
           cd tap
@@ -191,9 +204,29 @@ jobs:
           end
           RUBY
 
-          # Remove leading whitespace from heredoc indentation
-          sed -i 's/^          //' Formula/airstrings.rb
+          mkdir -p bucket
+          cat > bucket/airstrings.json << JSON
+          {
+              "version": "${VERSION}",
+              "description": "CLI for the AirStrings remote string management platform",
+              "homepage": "https://airstrings.com",
+              "license": "MIT",
+              "architecture": {
+                  "64bit": {
+                      "url": "${BASE_URL}/airstrings-v${VERSION}-windows-amd64.zip",
+                      "hash": "${SHA_WINDOWS_AMD64}"
+                  }
+              },
+              "bin": [
+                  "airstrings.exe",
+                  "airstrings-mcp.exe"
+              ]
+          }
+          JSON
 
-          git add Formula/airstrings.rb
+          # Remove leading whitespace from heredoc indentation
+          sed -i 's/^          //' Formula/airstrings.rb bucket/airstrings.json
+
+          git add Formula/airstrings.rb bucket/airstrings.json
           git commit -m "Update airstrings to ${VERSION}"
           git push origin main

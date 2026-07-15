@@ -4,10 +4,17 @@ Command-line interface for [AirStrings](https://airstrings.com) — manage strin
 
 ## Install
 
-### Homebrew
+### Homebrew (macOS / Linux)
 
 ```bash
 brew install symbionix-sl/airstrings/airstrings
+```
+
+### Scoop (Windows)
+
+```powershell
+scoop bucket add airstrings https://github.com/symbionix-sl/homebrew-airstrings
+scoop install airstrings
 ```
 
 ### From source
