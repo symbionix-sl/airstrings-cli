@@ -126,6 +126,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      id-token: write
     steps:
       - uses: actions/checkout@v6
 
@@ -147,10 +148,8 @@ jobs:
         working-directory: npm
         run: node test.js
 
-      - name: Publish to npm
+      - name: Publish to npm (Trusted Publishing via OIDC)
         working-directory: npm
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: npm publish --access public
 
   update-tap:
