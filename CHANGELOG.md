@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.13.7] - 2026-07-16
+
+### Fixed
+
+- npm installer on Windows: extraction now uses `%SystemRoot%\System32\tar.exe` instead of the first `tar` on PATH. Git for Windows puts GNU tar first, which misparses `C:\...` paths as remote hosts and cannot read `.zip` archives, breaking `npm install -g @airstrings/cli` for most Windows users.
+
 ## [0.13.6] - 2026-07-15
 
 ### Added

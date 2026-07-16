@@ -1,5 +1,6 @@
 'use strict';
 
+const fs = require('fs');
 const path = require('path');
 
 const TARGETS = {
@@ -29,4 +30,16 @@ function binaryPath(name) {
   return path.join(vendorDir, `${name}${ext}`);
 }
 
-module.exports = { target, vendorDir, binaryPath };
+// Git Bash's GNU tar shadows Windows' bsdtar on PATH: it parses C:\ as a
+// remote host and cannot read .zip. Always prefer the System32 one.
+function tarBinary() {
+  if (process.platform === 'win32') {
+    const sysTar = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'tar.exe');
+    if (fs.existsSync(sysTar)) {
+      return sysTar;
+    }
+  }
+  return 'tar';
+}
+
+module.exports = { target, vendorDir, binaryPath, tarBinary };

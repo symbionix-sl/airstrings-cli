@@ -6,7 +6,7 @@ const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
 
-const { target, vendorDir, binaryPath } = require('./lib/binary.js');
+const { target, vendorDir, binaryPath, tarBinary } = require('./lib/binary.js');
 const { checksumFor } = require('./lib/checksums.js');
 const { version } = require('./package.json');
 
@@ -43,7 +43,7 @@ async function main() {
 
   fs.rmSync(vendorDir, { recursive: true, force: true });
   fs.mkdirSync(vendorDir, { recursive: true });
-  execFileSync('tar', ['-xf', tmp, '-C', vendorDir]);
+  execFileSync(tarBinary(), ['-xf', tmp, '-C', vendorDir]);
   fs.rmSync(path.dirname(tmp), { recursive: true, force: true });
 
   if (process.platform !== 'win32') {
