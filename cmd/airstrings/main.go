@@ -78,6 +78,8 @@ func main() {
 		handleAPIKey(args)
 	case "strings":
 		handleStrings(args)
+	case "shared":
+		handleShared(args)
 	case "sections":
 		handleSections(args)
 	case "bundles":
@@ -149,6 +151,14 @@ Strings:
                           Write to local CSVs; --push also upserts the key to the API
   strings rm <key> [--locale <loc>] [--section <name>] [--push]
                           Remove from local CSVs; --push also removes from the API
+
+Shared (org shared-key bucket — auth via AIRSTRINGS_SHARED_API_KEY):
+  shared ls [--section <name>] [--locale <loc>] [--limit <n>] [--cursor <c>]
+            [--key-prefix <p>]         List the shared bucket's strings
+  shared add <key> <locale>=<value>... --format text|icu
+                                       Upsert a shared key directly to the API
+  shared rm <key>                      Delete a shared key
+  shared import <file>                 Import a CSV into the shared bucket
 
 Sections:
   sections list
@@ -265,6 +275,25 @@ Flags:
                           Write to local CSVs; --push also upserts the key to the API
   strings rm <key> [--locale <loc>] [--section <name>] [--push]
                           Remove from local CSVs; --push also removes from the API
+`,
+	"shared": `Usage: airstrings shared <ls|add|rm|import> [options]
+
+Manage the org shared-key bucket — a normal project reached via its own scoped
+write API key. Set AIRSTRINGS_SHARED_API_KEY (+ optional AIRSTRINGS_BASE_URL);
+the key self-identifies the bucket's project and environment, so no project or
+environment IDs are needed. These commands talk to the API directly (no local
+workspace).
+
+  shared ls [--section <name>] [--locale <loc>] [--limit <n>] [--cursor <c>]
+            [--key-prefix <p>]         List the shared bucket's strings
+  shared add <key> <locale>=<value>... --format text|icu
+                                       Upsert a shared key directly to the API
+  shared rm <key>                      Delete a shared key
+  shared import <file>                 Import a CSV into the shared bucket
+
+Environment variables:
+  AIRSTRINGS_SHARED_API_KEY   Scoped write key for the shared bucket (required)
+  AIRSTRINGS_BASE_URL         API base URL (default https://api.airstrings.com)
 `,
 	"sections": `Usage: airstrings sections <list|create|delete>
 
@@ -421,6 +450,19 @@ func clientFor(wsCfg *workspace.WorkspaceConfig) *client.Client {
 	c, err := workspace.ResolveClient(wsCfg)
 	if err != nil {
 		output.Errorf("%s", err)
+	}
+	return c
+}
+
+// mustSharedClient returns a client for the org shared-key bucket, resolved from
+// AIRSTRINGS_SHARED_API_KEY. Unset key is a usage error naming the variable.
+func mustSharedClient() *client.Client {
+	c, ok, err := workspace.SharedClientFromEnv()
+	if !ok {
+		output.Fail(output.ExitUsage, "AIRSTRINGS_SHARED_API_KEY is not set — export the shared bucket's scoped write API key")
+	}
+	if err != nil {
+		failAPI("resolve shared bucket credentials", err)
 	}
 	return c
 }
@@ -1320,6 +1362,256 @@ func handleStringRm(args []string) {
 		msg += " (pushed)"
 	}
 	output.Success(msg)
+}
+
+// --- Shared bucket commands ---
+
+// handleShared manages the org shared-key bucket, a normal project reached via
+// its own scoped write key in AIRSTRINGS_SHARED_API_KEY.
+func handleShared(args []string) {
+	if len(args) == 0 {
+		output.Fail(output.ExitUsage, "usage: airstrings shared <ls|add|rm|import> [options]")
+	}
+
+	switch args[0] {
+	case "ls", "list":
+		handleSharedList(args[1:])
+	case "add":
+		handleSharedAdd(args[1:])
+	case "rm":
+		handleSharedRm(args[1:])
+	case "import":
+		handleSharedImport(args[1:])
+	default:
+		output.Fail(output.ExitUsage, "unknown shared command: %s", args[0])
+	}
+}
+
+func handleSharedList(args []string) {
+	opts := client.ListStringsOpts{}
+	keyPrefix := ""
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--locale":
+			i++
+			if i < len(args) {
+				opts.Locale = args[i]
+			}
+		case "--section":
+			i++
+			if i < len(args) {
+				opts.Section = args[i]
+			}
+		case "--limit":
+			i++
+			if i < len(args) {
+				fmt.Sscanf(args[i], "%d", &opts.Limit)
+			}
+		case "--cursor":
+			i++
+			if i < len(args) {
+				opts.Cursor = args[i]
+			}
+		case "--key-prefix":
+			i++
+			if i < len(args) {
+				keyPrefix = args[i]
+			}
+		default:
+			if strings.HasPrefix(args[i], "-") {
+				output.Fail(output.ExitUsage, "unknown flag: %s", args[i])
+			}
+		}
+	}
+
+	c := mustSharedClient()
+
+	var entries []client.StringEntry
+	var page client.PaginationMeta
+
+	if opts.Limit > 0 || opts.Cursor != "" {
+		list, err := c.ListStrings(opts)
+		if err != nil {
+			failAPI("list shared strings", err)
+		}
+		entries = list.Data
+		page = list.Pagination
+	} else {
+		all, err := c.ListAllStrings(opts)
+		if err != nil {
+			failAPI("list shared strings", err)
+		}
+		entries = all
+	}
+
+	if keyPrefix != "" {
+		filtered := entries[:0]
+		for _, s := range entries {
+			if strings.HasPrefix(s.Key, keyPrefix) {
+				filtered = append(filtered, s)
+			}
+		}
+		entries = filtered
+	}
+
+	if output.JSONMode {
+		output.JSON(map[string]any{
+			"data": entries,
+			"pagination": map[string]any{
+				"has_more":    page.HasMore,
+				"next_cursor": page.NextCursor,
+			},
+		})
+		return
+	}
+
+	headers := []string{"KEY", "FORMAT", "LOCALES", "SECTION"}
+	var rows [][]string
+	for _, s := range entries {
+		locales := make([]string, 0, len(s.Values))
+		for loc := range s.Values {
+			locales = append(locales, loc)
+		}
+		sec := "-"
+		if s.SectionID != nil {
+			sec = *s.SectionID
+		}
+		rows = append(rows, []string{s.Key, s.Format, strings.Join(locales, ", "), sec})
+	}
+	output.Table(headers, rows)
+
+	if page.HasMore {
+		if page.NextCursor != "" {
+			fmt.Printf("\n(more results — next: airstrings shared ls --cursor %s)\n", page.NextCursor)
+		} else {
+			fmt.Printf("\n(more results available)\n")
+		}
+	}
+}
+
+func handleSharedAdd(args []string) {
+	if len(args) < 2 {
+		output.Fail(output.ExitUsage, "usage: airstrings shared add <key> <locale>=<value>... --format text|icu")
+	}
+
+	key := args[0]
+	format := ""
+	values := make(map[string]string)
+
+	for i := 1; i < len(args); i++ {
+		switch args[i] {
+		case "--format":
+			i++
+			if i < len(args) {
+				format = args[i]
+			}
+		default:
+			if strings.HasPrefix(args[i], "-") {
+				output.Fail(output.ExitUsage, "unknown flag: %s", args[i])
+			}
+			parts := strings.SplitN(args[i], "=", 2)
+			if len(parts) == 2 {
+				values[parts[0]] = parts[1]
+			} else {
+				output.Fail(output.ExitUsage, "invalid format %q — expected locale=value", args[i])
+			}
+		}
+	}
+
+	if len(values) == 0 {
+		output.Fail(output.ExitUsage, "at least one locale=value pair is required")
+	}
+	if format == "" {
+		output.Fail(output.ExitUsage, "--format is required — must be 'text' or 'icu'")
+	}
+	if err := workspace.ValidateFormat(format); err != nil {
+		output.Errorf("%s", err)
+	}
+
+	var warning string
+	if flagged := workspace.FlagICUInText(format, values); len(flagged) > 0 {
+		warning = fmt.Sprintf("text value with {…} placeholders in locale(s) %s — did you mean --format icu? text is served verbatim, braces are not interpolated", strings.Join(flagged, ", "))
+		output.Warnf("%s: %s", key, warning)
+	}
+
+	req := client.UpsertStringRequest{Format: format, Values: make(map[string]*string, len(values))}
+	for loc, val := range values {
+		v := val
+		req.Values[loc] = &v
+	}
+
+	c := mustSharedClient()
+	if _, err := c.UpsertString(key, req); err != nil {
+		failAPI(fmt.Sprintf("add %s", key), err)
+	}
+
+	if output.JSONMode {
+		out := map[string]any{
+			"key":     key,
+			"locales": len(values),
+			"format":  format,
+		}
+		if warning != "" {
+			out["warning"] = warning
+		}
+		output.JSON(out)
+		return
+	}
+
+	output.Success(fmt.Sprintf("Added %s to shared bucket — %d locale(s) [%s]", key, len(values), format))
+}
+
+func handleSharedRm(args []string) {
+	if len(args) < 1 {
+		output.Fail(output.ExitUsage, "usage: airstrings shared rm <key>")
+	}
+
+	key := args[0]
+	for _, a := range args[1:] {
+		if strings.HasPrefix(a, "-") {
+			output.Fail(output.ExitUsage, "unknown flag: %s", a)
+		}
+	}
+
+	c := mustSharedClient()
+	if err := c.DeleteString(key); err != nil {
+		failAPI(fmt.Sprintf("remove %s", key), err)
+	}
+
+	if output.JSONMode {
+		output.JSON(map[string]any{"key": key, "removed": true})
+		return
+	}
+
+	output.Success(fmt.Sprintf("Removed %s from shared bucket", key))
+}
+
+func handleSharedImport(args []string) {
+	for _, a := range args {
+		if strings.HasPrefix(a, "-") {
+			output.Fail(output.ExitUsage, "unknown flag: %s", a)
+		}
+	}
+	if len(args) < 1 {
+		output.Fail(output.ExitUsage, "usage: airstrings shared import <file>")
+	}
+
+	c := mustSharedClient()
+	data, err := os.ReadFile(args[0])
+	if err != nil {
+		output.Errorf("read file: %s", err)
+	}
+	status, err := c.CreateImport(data, nil)
+	if err != nil {
+		failAPI("import", err)
+	}
+
+	if output.JSONMode {
+		output.JSON(status)
+		return
+	}
+
+	output.Success(fmt.Sprintf("Import started (id: %s, rows: %d)", status.ID, status.TotalRows))
 }
 
 // --- Section commands ---

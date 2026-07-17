@@ -262,6 +262,35 @@ func ClientFromEnv() (*client.Client, bool, error) {
 	return client.New(env.APIKey, env.BaseURL, projectID, envID), true, nil
 }
 
+// SharedClientFromEnv builds an API client for the org shared-key bucket from
+// AIRSTRINGS_SHARED_API_KEY (+ optional AIRSTRINGS_BASE_URL). The scoped key
+// self-identifies its project and default environment, resolved server-side in
+// one or two API calls — no project/env IDs are read. The second return is
+// false when AIRSTRINGS_SHARED_API_KEY is unset.
+func SharedClientFromEnv() (*client.Client, bool, error) {
+	key := os.Getenv("AIRSTRINGS_SHARED_API_KEY")
+	if key == "" {
+		return nil, false, nil
+	}
+	baseURL := os.Getenv("AIRSTRINGS_BASE_URL")
+
+	proj, err := client.New(key, baseURL, "", "").GetProject()
+	if err != nil {
+		return nil, true, fmt.Errorf("resolve project from AIRSTRINGS_SHARED_API_KEY: %w", err)
+	}
+
+	envs, err := client.New(key, baseURL, proj.ID, "").ListEnvironments()
+	if err != nil {
+		return nil, true, fmt.Errorf("resolve environment from AIRSTRINGS_SHARED_API_KEY: %w", err)
+	}
+	envID := defaultEnvID(envs)
+	if envID == "" {
+		return nil, true, fmt.Errorf("no environments found for the shared bucket key")
+	}
+
+	return client.New(key, baseURL, proj.ID, envID), true, nil
+}
+
 func defaultEnvID(envs []client.Environment) string {
 	for _, e := range envs {
 		if e.IsDefault {
