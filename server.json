@@ -3,7 +3,7 @@
   "name": "io.github.symbionix-sl/airstrings-cli",
   "title": "AirStrings",
   "description": "Manage AirStrings localization strings and publish signed bundles from your workspace.",
-  "version": "0.13.7",
+  "version": "0.14.0",
   "repository": {
     "url": "https://github.com/symbionix-sl/airstrings-cli",
     "source": "github",
