@@ -24,13 +24,23 @@ type Credential struct {
 	EnvName string `json:"env_name"`
 }
 
+// SharedCredential holds the org shared-key bucket's scoped write key plus the
+// project/environment it resolves to (cached at `shared init` time).
+type SharedCredential struct {
+	APIKey    string `json:"api_key"`
+	BaseURL   string `json:"base_url,omitempty"`
+	ProjectID string `json:"project_id"`
+	EnvID     string `json:"env_id"`
+}
+
 // WorkspaceConfig is the project-local config stored in .airstrings/config.json.
 type WorkspaceConfig struct {
-	ProjectID   string       `json:"project_id"`
-	ProjectName string       `json:"project_name"`
-	ActiveEnv   string       `json:"active_env"`
-	BundlesDir  string       `json:"bundles_dir,omitempty"`
-	Credentials []Credential `json:"credentials"`
+	ProjectID   string            `json:"project_id"`
+	ProjectName string            `json:"project_name"`
+	ActiveEnv   string            `json:"active_env"`
+	BundlesDir  string            `json:"bundles_dir,omitempty"`
+	Credentials []Credential      `json:"credentials"`
+	Shared      *SharedCredential `json:"shared,omitempty"`
 }
 
 // ActiveCredential returns the credential matching the active environment.
@@ -289,6 +299,46 @@ func SharedClientFromEnv() (*client.Client, bool, error) {
 	}
 
 	return client.New(key, baseURL, proj.ID, envID), true, nil
+}
+
+// ResolveSharedCredential resolves the shared bucket's project and default
+// environment from a scoped write key, in one or two API calls.
+func ResolveSharedCredential(apiKey, baseURL string) (*SharedCredential, error) {
+	proj, err := client.New(apiKey, baseURL, "", "").GetProject()
+	if err != nil {
+		return nil, fmt.Errorf("resolve project from shared key: %w", err)
+	}
+	envs, err := client.New(apiKey, baseURL, proj.ID, "").ListEnvironments()
+	if err != nil {
+		return nil, fmt.Errorf("resolve environment from shared key: %w", err)
+	}
+	envID := defaultEnvID(envs)
+	if envID == "" {
+		return nil, fmt.Errorf("no environments found for the shared bucket key")
+	}
+	return &SharedCredential{APIKey: apiKey, BaseURL: baseURL, ProjectID: proj.ID, EnvID: envID}, nil
+}
+
+// SharedClient builds a client for the org shared-key bucket. AIRSTRINGS_SHARED_API_KEY
+// (env) wins; otherwise the stored `shared` credential in the nearest workspace
+// config is used. Returns an error explaining `shared init` when neither is set.
+func SharedClient() (*client.Client, error) {
+	if c, ok, err := SharedClientFromEnv(); ok || err != nil {
+		return c, err
+	}
+	wsDir, err := Find()
+	if err != nil {
+		return nil, fmt.Errorf("no shared-bucket key — run: airstrings shared init <api-key> (or set AIRSTRINGS_SHARED_API_KEY)")
+	}
+	cfg, err := LoadConfig(wsDir)
+	if err != nil {
+		return nil, err
+	}
+	if cfg.Shared == nil || cfg.Shared.APIKey == "" {
+		return nil, fmt.Errorf("no shared-bucket key — run: airstrings shared init <api-key>")
+	}
+	s := cfg.Shared
+	return client.New(s.APIKey, s.BaseURL, s.ProjectID, s.EnvID), nil
 }
 
 func defaultEnvID(envs []client.Environment) string {

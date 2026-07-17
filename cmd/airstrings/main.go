@@ -152,7 +152,11 @@ Strings:
   strings rm <key> [--locale <loc>] [--section <name>] [--push]
                           Remove from local CSVs; --push also removes from the API
 
-Shared (org shared-key bucket — auth via AIRSTRINGS_SHARED_API_KEY):
+Shared (org shared-key bucket):
+  shared init <api-key> [--url <base-url>]
+                                       Save the bucket's scoped write key to
+                                       .airstrings/config.json (or set
+                                       AIRSTRINGS_SHARED_API_KEY to override)
   shared ls [--section <name>] [--locale <loc>] [--limit <n>] [--cursor <c>]
             [--key-prefix <p>]         List the shared bucket's strings
   shared add <key> <locale>=<value>... --format text|icu
@@ -276,14 +280,16 @@ Flags:
   strings rm <key> [--locale <loc>] [--section <name>] [--push]
                           Remove from local CSVs; --push also removes from the API
 `,
-	"shared": `Usage: airstrings shared <ls|add|rm|import> [options]
+	"shared": `Usage: airstrings shared <init|ls|add|rm|import> [options]
 
 Manage the org shared-key bucket — a normal project reached via its own scoped
-write API key. Set AIRSTRINGS_SHARED_API_KEY (+ optional AIRSTRINGS_BASE_URL);
-the key self-identifies the bucket's project and environment, so no project or
-environment IDs are needed. These commands talk to the API directly (no local
-workspace).
+write API key. Run 'shared init <api-key>' once to save the key to
+.airstrings/config.json, then ls/add/rm/import use it automatically. The scoped
+key self-identifies the bucket's project and environment, so no project or
+environment IDs are needed.
 
+  shared init <api-key> [--url <base-url>]
+                                       Save the bucket's scoped write key locally
   shared ls [--section <name>] [--locale <loc>] [--limit <n>] [--cursor <c>]
             [--key-prefix <p>]         List the shared bucket's strings
   shared add <key> <locale>=<value>... --format text|icu
@@ -291,8 +297,8 @@ workspace).
   shared rm <key>                      Delete a shared key
   shared import <file>                 Import a CSV into the shared bucket
 
-Environment variables:
-  AIRSTRINGS_SHARED_API_KEY   Scoped write key for the shared bucket (required)
+Environment variables (override the saved key):
+  AIRSTRINGS_SHARED_API_KEY   Scoped write key for the shared bucket
   AIRSTRINGS_BASE_URL         API base URL (default https://api.airstrings.com)
 `,
 	"sections": `Usage: airstrings sections <list|create|delete>
@@ -457,12 +463,14 @@ func clientFor(wsCfg *workspace.WorkspaceConfig) *client.Client {
 // mustSharedClient returns a client for the org shared-key bucket, resolved from
 // AIRSTRINGS_SHARED_API_KEY. Unset key is a usage error naming the variable.
 func mustSharedClient() *client.Client {
-	c, ok, err := workspace.SharedClientFromEnv()
-	if !ok {
-		output.Fail(output.ExitUsage, "AIRSTRINGS_SHARED_API_KEY is not set — export the shared bucket's scoped write API key")
-	}
+	c, err := workspace.SharedClient()
 	if err != nil {
-		failAPI("resolve shared bucket credentials", err)
+		var apiErr *client.APIError
+		var netErr *client.NetworkError
+		if errors.As(err, &apiErr) || errors.As(err, &netErr) {
+			failAPI("resolve shared bucket credentials", err)
+		}
+		output.Fail(output.ExitUsage, "%s", err)
 	}
 	return c
 }
@@ -1370,10 +1378,12 @@ func handleStringRm(args []string) {
 // its own scoped write key in AIRSTRINGS_SHARED_API_KEY.
 func handleShared(args []string) {
 	if len(args) == 0 {
-		output.Fail(output.ExitUsage, "usage: airstrings shared <ls|add|rm|import> [options]")
+		output.Fail(output.ExitUsage, "usage: airstrings shared <init|ls|add|rm|import> [options]")
 	}
 
 	switch args[0] {
+	case "init":
+		handleSharedInit(args[1:])
 	case "ls", "list":
 		handleSharedList(args[1:])
 	case "add":
@@ -1385,6 +1395,43 @@ func handleShared(args []string) {
 	default:
 		output.Fail(output.ExitUsage, "unknown shared command: %s", args[0])
 	}
+}
+
+func handleSharedInit(args []string) {
+	if len(args) < 1 {
+		output.Fail(output.ExitUsage, "usage: airstrings shared init <api-key> [--url <base-url>]")
+	}
+	apiKey, baseURL := parseKeyAndURL(args)
+
+	cred, err := workspace.ResolveSharedCredential(apiKey, baseURL)
+	if err != nil {
+		failAPI("resolve shared bucket", err)
+	}
+
+	if wsDir, findErr := workspace.Find(); findErr == nil {
+		cfg, loadErr := workspace.LoadConfig(wsDir)
+		if loadErr != nil {
+			output.Errorf("load workspace: %s", loadErr)
+		}
+		cfg.Shared = cred
+		if saveErr := workspace.SaveConfig(wsDir, cfg); saveErr != nil {
+			output.Errorf("save workspace: %s", saveErr)
+		}
+	} else {
+		cwd, cwdErr := os.Getwd()
+		if cwdErr != nil {
+			output.Errorf("get working directory: %s", cwdErr)
+		}
+		if initErr := workspace.Init(cwd, workspace.WorkspaceConfig{Shared: cred}); initErr != nil {
+			output.Errorf("init workspace: %s", initErr)
+		}
+	}
+
+	masked := apiKey
+	if len(masked) > 12 {
+		masked = masked[:8] + "..." + masked[len(masked)-4:]
+	}
+	output.Success(fmt.Sprintf("Shared bucket key saved to .airstrings/config.json (%s) — shared ls/add/rm/import will use it", masked))
 }
 
 func handleSharedList(args []string) {
