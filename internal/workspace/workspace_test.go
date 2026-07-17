@@ -14,8 +14,9 @@ func TestInit(t *testing.T) {
 		ProjectID:   "proj-123",
 		ProjectName: "Test Project",
 		ActiveEnv:   "env-456",
+		OrgID:       "org-789",
 		Credentials: []Credential{
-			{APIKey: "key1", EnvID: "env-456", EnvName: "production"},
+			{APIKey: "key1", EnvID: "env-456", EnvName: "production", PublicKey: "pk-abc"},
 		},
 	}
 	if err := Init(dir, cfg); err != nil {
@@ -50,8 +51,14 @@ func TestInit(t *testing.T) {
 	if loaded.ProjectID != "proj-123" || loaded.ActiveEnv != "env-456" {
 		t.Errorf("unexpected config: %+v", loaded)
 	}
+	if loaded.OrgID != "org-789" {
+		t.Errorf("expected org_id org-789, got %q", loaded.OrgID)
+	}
 	if len(loaded.Credentials) != 1 || loaded.Credentials[0].APIKey != "key1" {
 		t.Errorf("unexpected credentials: %+v", loaded.Credentials)
+	}
+	if loaded.Credentials[0].PublicKey != "pk-abc" {
+		t.Errorf("expected credential public_key pk-abc, got %q", loaded.Credentials[0].PublicKey)
 	}
 }
 

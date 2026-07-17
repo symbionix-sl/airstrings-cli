@@ -18,10 +18,11 @@ const (
 
 // Credential holds an API key and the environment it belongs to.
 type Credential struct {
-	APIKey  string `json:"api_key"`
-	BaseURL string `json:"base_url,omitempty"`
-	EnvID   string `json:"env_id"`
-	EnvName string `json:"env_name"`
+	APIKey    string `json:"api_key"`
+	BaseURL   string `json:"base_url,omitempty"`
+	EnvID     string `json:"env_id"`
+	EnvName   string `json:"env_name"`
+	PublicKey string `json:"public_key,omitempty"`
 }
 
 // WorkspaceConfig is the project-local config stored in .airstrings/config.json.
@@ -29,6 +30,7 @@ type WorkspaceConfig struct {
 	ProjectID   string       `json:"project_id"`
 	ProjectName string       `json:"project_name"`
 	ActiveEnv   string       `json:"active_env"`
+	OrgID       string       `json:"org_id,omitempty"`
 	BundlesDir  string       `json:"bundles_dir,omitempty"`
 	Credentials []Credential `json:"credentials"`
 }

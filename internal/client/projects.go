@@ -21,14 +21,15 @@ func (c *Client) GetProject() (*Project, error) {
 }
 
 type Environment struct {
-	ID        string `json:"id"`
-	ProjectID string `json:"project_id"`
-	Name      string `json:"name"`
-	IsDefault bool   `json:"is_default"`
-	IsSealed  bool   `json:"is_sealed"`
-	PublicKey string `json:"public_key,omitempty"`
-	CreatedAt string `json:"created_at"`
-	UpdatedAt string `json:"updated_at"`
+	ID             string `json:"id"`
+	ProjectID      string `json:"project_id"`
+	Name           string `json:"name"`
+	IsDefault      bool   `json:"is_default"`
+	IsSealed       bool   `json:"is_sealed"`
+	PublicKey      string `json:"public_key,omitempty"`
+	OrganizationID string `json:"organization_id,omitempty"`
+	CreatedAt      string `json:"created_at"`
+	UpdatedAt      string `json:"updated_at"`
 }
 
 type EnvironmentList struct {

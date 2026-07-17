@@ -361,3 +361,60 @@ func TestVariantsSetMergesNewVariantAtZero(t *testing.T) {
 		t.Errorf("variants[blue][en] = %q, want %q", req.Variants["blue"]["en"], "Hi")
 	}
 }
+
+func TestInitWritesSDKConfig(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/v1/projects":
+			w.Write([]byte(`{"id":"proj_test","name":"Test Project","default_locale":"en"}`))
+		case strings.HasSuffix(r.URL.Path, "/sections"):
+			w.Write([]byte(`{"data":[]}`))
+		case strings.HasSuffix(r.URL.Path, "/environments"):
+			w.Write([]byte(`{"data":[{"id":"env_staging","project_id":"proj_test","name":"staging","is_default":true,"is_sealed":false}]}`))
+		case strings.Contains(r.URL.Path, "/environments/"):
+			w.Write([]byte(`{"id":"env_staging","project_id":"proj_test","name":"staging","is_default":true,"is_sealed":false,"public_key":"pk_test_abc","organization_id":"org_test_123"}`))
+		default:
+			w.Write([]byte(`{"data":[]}`))
+		}
+	}))
+	defer srv.Close()
+
+	workDir := t.TempDir()
+	cmd := exec.Command(binPath, "init", "ak_test_key", "--url", srv.URL, "--json")
+	cmd.Dir = workDir
+	cmd.Env = scrubbedEnv()
+	var stdout, stderr strings.Builder
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("init failed: %v\nstdout: %s\nstderr: %s", err, stdout.String(), stderr.String())
+	}
+
+	data, err := os.ReadFile(filepath.Join(workDir, ".airstrings", "config.json"))
+	if err != nil {
+		t.Fatalf("read config.json: %v", err)
+	}
+
+	var cfg struct {
+		OrgID       string `json:"org_id"`
+		Credentials []struct {
+			EnvID     string `json:"env_id"`
+			PublicKey string `json:"public_key"`
+		} `json:"credentials"`
+	}
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Fatalf("config.json not valid JSON: %v\nbody: %s", err, data)
+	}
+	if cfg.OrgID != "org_test_123" {
+		t.Errorf("org_id = %q, want org_test_123", cfg.OrgID)
+	}
+	var pk string
+	for _, c := range cfg.Credentials {
+		if c.EnvID == "env_staging" {
+			pk = c.PublicKey
+		}
+	}
+	if pk != "pk_test_abc" {
+		t.Errorf("active credential public_key = %q, want pk_test_abc", pk)
+	}
+}

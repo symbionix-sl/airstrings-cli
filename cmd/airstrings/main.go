@@ -2252,12 +2252,23 @@ func handleInit(args []string) {
 	}
 	activeEnvName := addCredentials(&wsCfg, apiKey, baseURL, envs)
 
+	c := client.New(apiKey, baseURL, proj.ID, wsCfg.ActiveEnv)
+
+	// Env-scoped keys 404 on any env but their own — enrich only the active (bound) env, best-effort.
+	if wsCfg.ActiveEnv != "" {
+		if env, err := c.GetEnvironment(wsCfg.ActiveEnv); err == nil {
+			wsCfg.OrgID = env.OrganizationID
+			if cred := wsCfg.FindByEnvID(wsCfg.ActiveEnv); cred != nil {
+				cred.PublicKey = env.PublicKey
+			}
+		}
+	}
+
 	if err := workspace.Init(cwd, wsCfg); err != nil {
 		output.Errorf("init workspace: %s", err)
 	}
 
 	// Create section dirs for remote sections
-	c := client.New(apiKey, baseURL, proj.ID, wsCfg.ActiveEnv)
 	sections, err := c.ListSections()
 	sectionCount := 0
 	if err == nil && len(sections.Data) > 0 {
