@@ -418,3 +418,135 @@ func TestInitWritesSDKConfig(t *testing.T) {
 		t.Errorf("active credential public_key = %q, want pk_test_abc", pk)
 	}
 }
+
+// envScopedKeyHandler mimics the API for a key bound only to the staging env of
+// proj_test: it can list both environments (project-scoped) but an env-scoped
+// GET 404s on any env but staging (as envScope does for API keys).
+func envScopedKeyHandler(w http.ResponseWriter, r *http.Request) {
+	switch {
+	case r.URL.Path == "/v1/projects":
+		w.Write([]byte(`{"id":"proj_test","name":"Test Project","default_locale":"en"}`))
+	case strings.HasSuffix(r.URL.Path, "/environments"):
+		w.Write([]byte(`{"data":[` +
+			`{"id":"env_prod","project_id":"proj_test","name":"production","is_default":true},` +
+			`{"id":"env_staging","project_id":"proj_test","name":"staging","is_default":false}]}`))
+	case strings.HasSuffix(r.URL.Path, "/environments/env_staging"):
+		w.Write([]byte(`{"id":"env_staging","project_id":"proj_test","name":"staging","is_default":false,"public_key":"pk_staging","organization_id":"org_test"}`))
+	case strings.HasSuffix(r.URL.Path, "/sections"):
+		w.Write([]byte(`{"data":[]}`))
+	default:
+		w.WriteHeader(http.StatusNotFound)
+		w.Write([]byte(`{"error":{"code":"not_found","message":"Environment not found"}}`))
+	}
+}
+
+func TestInitEnvScopedKeyFilesOnlyBoundEnv(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(envScopedKeyHandler))
+	defer srv.Close()
+
+	dir := t.TempDir()
+	code, stdout, stderr := runSharedInDir(t, dir, nil, "init", "ak_staging_key", "--url", srv.URL)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, stdout, stderr)
+	}
+
+	cfg := readSharedConfig(t, dir)
+	if len(cfg.Credentials) != 1 {
+		t.Fatalf("filed %d credentials, want only the bound env: %+v", len(cfg.Credentials), cfg.Credentials)
+	}
+	if cfg.Credentials[0].EnvID != "env_staging" {
+		t.Errorf("bound credential env = %q, want env_staging", cfg.Credentials[0].EnvID)
+	}
+
+	var full struct {
+		ActiveEnv string `json:"active_env"`
+	}
+	raw, err := os.ReadFile(filepath.Join(dir, ".airstrings", "config.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(raw, &full); err != nil {
+		t.Fatal(err)
+	}
+	if full.ActiveEnv != "env_staging" {
+		t.Errorf("active_env = %q, want env_staging (the bound env, not the project default)", full.ActiveEnv)
+	}
+}
+
+func TestEnvAddScopedKeyPreservesOtherEnvCredential(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(envScopedKeyHandler))
+	defer srv.Close()
+
+	dir := t.TempDir()
+	wsDir := filepath.Join(dir, ".airstrings")
+	if err := os.MkdirAll(wsDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	seed := `{"project_id":"proj_test","project_name":"Test Project","active_env":"env_prod",` +
+		`"credentials":[{"api_key":"key_prod","base_url":"` + srv.URL + `","env_id":"env_prod","env_name":"production"}]}`
+	if err := os.WriteFile(filepath.Join(wsDir, "config.json"), []byte(seed), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	code, stdout, stderr := runSharedInDir(t, dir, nil, "env", "add", "ak_staging_key", "--url", srv.URL)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, stdout, stderr)
+	}
+
+	cfg := readSharedConfig(t, dir)
+	byEnv := map[string]string{}
+	for _, c := range cfg.Credentials {
+		byEnv[c.EnvID] = c.APIKey
+	}
+	if byEnv["env_prod"] != "key_prod" {
+		t.Errorf("production credential clobbered: env_prod key = %q, want key_prod", byEnv["env_prod"])
+	}
+	if byEnv["env_staging"] != "ak_staging_key" {
+		t.Errorf("staging credential not filed: env_staging key = %q, want ak_staging_key", byEnv["env_staging"])
+	}
+	if len(cfg.Credentials) != 2 {
+		t.Errorf("want 2 credentials, got %d: %+v", len(cfg.Credentials), cfg.Credentials)
+	}
+}
+
+func TestInitRefusesToClobberExistingWorkspace(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(envScopedKeyHandler))
+	defer srv.Close()
+
+	dir := t.TempDir()
+	wsDir := filepath.Join(dir, ".airstrings")
+	if err := os.MkdirAll(wsDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	seed := `{"project_id":"proj_old","project_name":"Old Project","active_env":"env_old",` +
+		`"credentials":[{"api_key":"key_old","base_url":"https://api.example.com","env_id":"env_old","env_name":"production"}]}`
+	if err := os.WriteFile(filepath.Join(wsDir, "config.json"), []byte(seed), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	code, stdout, stderr := runSharedInDir(t, dir, nil, "init", "ak_staging_key", "--url", srv.URL)
+	if code == 0 {
+		t.Fatalf("init on existing workspace should fail, got exit 0\nstdout: %s", stdout)
+	}
+	if !strings.Contains(stderr, "already initialized for Old Project / production") {
+		t.Errorf("error missing project/env name: %s", stderr)
+	}
+	if !strings.Contains(stderr, "airstrings env add <api-key>") {
+		t.Errorf("error missing env-add hint: %s", stderr)
+	}
+	if cfg := readSharedConfig(t, dir); cfg.ProjectID != "proj_old" || len(cfg.Credentials) != 1 || cfg.Credentials[0].APIKey != "key_old" {
+		t.Errorf("existing workspace was modified without --purge: %+v", cfg)
+	}
+
+	code, stdout, stderr = runSharedInDir(t, dir, nil, "init", "ak_staging_key", "--url", srv.URL, "--purge")
+	if code != 0 {
+		t.Fatalf("init --purge failed: exit %d\nstdout: %s\nstderr: %s", code, stdout, stderr)
+	}
+	cfg := readSharedConfig(t, dir)
+	if cfg.ProjectID != "proj_test" {
+		t.Errorf("after --purge project_id = %q, want proj_test", cfg.ProjectID)
+	}
+	if len(cfg.Credentials) != 1 || cfg.Credentials[0].EnvID != "env_staging" {
+		t.Errorf("after --purge want single env_staging credential, got %+v", cfg.Credentials)
+	}
+}

@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.14.1] - 2026-07-18
+
+### Fixed
+
+- Env-scoped API keys are no longer misfiled under every environment in the project. `ListEnvironments` returns all of a project's environments, but a key authenticates to only one; `init`/`env add` now verify per environment and store the credential only under the environment the key actually authenticates to. Previously a single key was written under every environment, silently overwriting other environments' stored keys.
+- `airstrings init` refuses to run against an already-initialized workspace unless `--purge` is passed, so it can no longer wipe stored credentials. To add another environment, use `airstrings env add <key>`.
+
 ## [0.13.7] - 2026-07-16
 
 ### Fixed

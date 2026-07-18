@@ -742,29 +742,56 @@ func validateAndDiscover(apiKey, baseURL string) (*client.Project, []client.Envi
 	return proj, envs
 }
 
-// addCredentials adds environment credentials to a workspace config and returns the active env name.
-func addCredentials(wsCfg *workspace.WorkspaceConfig, apiKey, baseURL string, envs []client.Environment) string {
-	var activeEnvID, activeEnvName string
-	for _, env := range envs {
-		cred := workspace.Credential{
-			APIKey:  apiKey,
-			BaseURL: baseURL,
-			EnvID:   env.ID,
-			EnvName: env.Name,
-		}
-		wsCfg.AddOrUpdate(cred)
+// addCredentials files a credential for each environment the key actually
+// authenticates to, and returns those environments plus the active env name.
+// API keys are env-scoped: an env-scoped GET 404s on any env but the key's own,
+// so probing separates "envs the key can list" from "envs it can authenticate to".
+func addCredentials(wsCfg *workspace.WorkspaceConfig, apiKey, baseURL, projectID string, envs []client.Environment) ([]client.Environment, string) {
+	probe := client.New(apiKey, baseURL, projectID, "")
 
+	var filed []client.Environment
+	var probeErr error
+	for _, env := range envs {
+		full, err := probe.GetEnvironment(env.ID)
+		if err != nil {
+			var apiErr *client.APIError
+			if errors.As(err, &apiErr) && apiErr.StatusCode == 404 {
+				continue
+			}
+			probeErr = err
+			continue
+		}
+		wsCfg.AddOrUpdate(workspace.Credential{
+			APIKey:    apiKey,
+			BaseURL:   baseURL,
+			EnvID:     full.ID,
+			EnvName:   full.Name,
+			PublicKey: full.PublicKey,
+		})
+		if wsCfg.OrgID == "" {
+			wsCfg.OrgID = full.OrganizationID
+		}
+		filed = append(filed, *full)
+	}
+
+	if len(filed) == 0 {
+		if probeErr != nil {
+			failAPI("verify environment access", probeErr)
+		}
+		output.Errorf("API key does not authenticate to any environment in this project")
+	}
+
+	var activeEnvID, activeEnvName string
+	for _, env := range filed {
 		if env.IsDefault || activeEnvID == "" {
 			activeEnvID = env.ID
 			activeEnvName = env.Name
 		}
 	}
-
-	// Only set active env if not already set
 	if wsCfg.ActiveEnv == "" && activeEnvID != "" {
 		wsCfg.ActiveEnv = activeEnvID
 	}
-	return activeEnvName
+	return filed, activeEnvName
 }
 
 func handleStatus(args []string) {
@@ -848,24 +875,24 @@ func handleEnv(args []string) {
 		wsDir, wsCfg := mustWorkspace()
 
 		// Validate and discover environments for this key
-		_, envs := validateAndDiscover(apiKey, baseURL)
-		activeEnvName := addCredentials(wsCfg, apiKey, baseURL, envs)
+		proj, envs := validateAndDiscover(apiKey, baseURL)
+		filed, activeEnvName := addCredentials(wsCfg, apiKey, baseURL, proj.ID, envs)
 
 		if err := workspace.SaveConfig(wsDir, wsCfg); err != nil {
 			output.Errorf("save workspace: %s", err)
 		}
 
 		if output.JSONMode {
-			names := make([]string, 0, len(envs))
-			for _, env := range envs {
+			names := make([]string, 0, len(filed))
+			for _, env := range filed {
 				names = append(names, env.Name)
 			}
-			output.JSON(map[string]any{"added": len(envs), "environments": names, "active_env": activeEnvName})
+			output.JSON(map[string]any{"added": len(filed), "environments": names, "active_env": activeEnvName})
 			return
 		}
 
-		output.Success(fmt.Sprintf("Added %d environment(s): %s", len(envs), activeEnvName))
-		for _, env := range envs {
+		output.Success(fmt.Sprintf("Added %d environment(s): %s", len(filed), activeEnvName))
+		for _, env := range filed {
 			marker := "  "
 			if env.ID == wsCfg.ActiveEnv {
 				marker = "✓ "
@@ -2542,6 +2569,23 @@ func handleImport(args []string) {
 
 // --- Workspace commands ---
 
+// describeWorkspace reads the project and active environment names from an
+// existing workspace config, with fallbacks when the config can't be read.
+func describeWorkspace(wsDir string) (projName, envName string) {
+	projName, envName = "this project", "the active environment"
+	cfg, err := workspace.LoadConfig(wsDir)
+	if err != nil {
+		return projName, envName
+	}
+	if cfg.ProjectName != "" {
+		projName = cfg.ProjectName
+	}
+	if cred, err := cfg.ActiveCredential(); err == nil {
+		envName = cred.EnvName
+	}
+	return projName, envName
+}
+
 func handleInit(args []string) {
 	if len(args) < 1 {
 		output.Fail(output.ExitUsage, "usage: airstrings init <api-key> [--url <base-url>] [--purge]")
@@ -2568,16 +2612,15 @@ func handleInit(args []string) {
 	// Handle existing workspace
 	wsDir := filepath.Join(cwd, ".airstrings")
 	if _, err := os.Stat(filepath.Join(wsDir, "config.json")); err == nil {
-		if purge {
-			// Remove everything and start fresh
-			if err := os.RemoveAll(wsDir); err != nil {
-				output.Errorf("remove workspace: %s", err)
-			}
-		} else {
-			// Keep CSVs: remove only config, re-init will recreate it
-			if err := os.Remove(filepath.Join(wsDir, "config.json")); err != nil {
-				output.Errorf("remove old config: %s", err)
-			}
+		if !purge {
+			projName, envName := describeWorkspace(wsDir)
+			output.Errorf("workspace already initialized for %s / %s\n"+
+				"to add another environment, run:\n"+
+				"  airstrings env add <api-key>\n"+
+				"(use --purge to wipe and re-init)", projName, envName)
+		}
+		if err := os.RemoveAll(wsDir); err != nil {
+			output.Errorf("remove workspace: %s", err)
 		}
 	}
 
@@ -2589,19 +2632,9 @@ func handleInit(args []string) {
 		ProjectID:   proj.ID,
 		ProjectName: proj.Name,
 	}
-	activeEnvName := addCredentials(&wsCfg, apiKey, baseURL, envs)
+	filed, activeEnvName := addCredentials(&wsCfg, apiKey, baseURL, proj.ID, envs)
 
 	c := client.New(apiKey, baseURL, proj.ID, wsCfg.ActiveEnv)
-
-	// Env-scoped keys 404 on any env but their own — enrich only the active (bound) env, best-effort.
-	if wsCfg.ActiveEnv != "" {
-		if env, err := c.GetEnvironment(wsCfg.ActiveEnv); err == nil {
-			wsCfg.OrgID = env.OrganizationID
-			if cred := wsCfg.FindByEnvID(wsCfg.ActiveEnv); cred != nil {
-				cred.PublicKey = env.PublicKey
-			}
-		}
-	}
 
 	if err := workspace.Init(cwd, wsCfg); err != nil {
 		output.Errorf("init workspace: %s", err)
@@ -2621,15 +2654,15 @@ func handleInit(args []string) {
 		output.JSON(map[string]any{
 			"project":      proj.Name,
 			"environment":  activeEnvName,
-			"environments": len(envs),
+			"environments": len(filed),
 			"sections":     sectionCount,
 		})
 		return
 	}
 
 	output.Success(fmt.Sprintf("Workspace initialized for %s / %s", proj.Name, activeEnvName))
-	if len(envs) > 1 {
-		fmt.Printf("  %d environments available. Use: airstrings env use <name>\n", len(envs))
+	if len(filed) > 1 {
+		fmt.Printf("  %d environments available. Use: airstrings env use <name>\n", len(filed))
 	}
 	if sectionCount > 0 {
 		fmt.Printf("  Sections: %d\n", sectionCount)
