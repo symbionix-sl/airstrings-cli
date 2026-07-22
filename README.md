@@ -8,12 +8,7 @@ Command-line interface for [AirStrings](https://airstrings.com) — manage strin
 
 ```bash
 npm install -g @airstrings/cli
-```
-
-Or run without installing:
-
-```bash
-npx @airstrings/cli <command>
+airstrings <command>
 ```
 
 Requires Node 18+. Installs `airstrings` and `airstrings-mcp`.
