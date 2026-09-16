@@ -84,6 +84,7 @@ type BundleStatus struct {
 	KeyID       string `json:"key_id"`
 	CreatedAt   string `json:"created_at"`
 	CDNURL      string `json:"cdn_url"`
+	FallbackURL string `json:"fallback_url,omitempty"`
 	SizeBytes   int    `json:"size_bytes"`
 	StringCount int    `json:"string_count"`
 }
