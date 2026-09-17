@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -1127,4 +1128,254 @@ func TestVerifyBundle_RevisionMismatchTyped(t *testing.T) {
 	if rm.got != 41 || rm.want != 42 {
 		t.Errorf("mismatch detail = %+v", rm)
 	}
+}
+
+func newHangingHost(t *testing.T) (string, func() int) {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var mu sync.Mutex
+	var conns []net.Conn
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			mu.Lock()
+			conns = append(conns, conn)
+			mu.Unlock()
+		}
+	}()
+	t.Cleanup(func() {
+		ln.Close()
+		mu.Lock()
+		defer mu.Unlock()
+		for _, c := range conns {
+			c.Close()
+		}
+	})
+	accepts := func() int {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(conns)
+	}
+	return "http://" + ln.Addr().String(), accepts
+}
+
+func serveBundles(bundles map[string][]byte) func(string, int) (int, []byte) {
+	return func(path string, _ int) (int, []byte) {
+		if b, ok := bundles[path]; ok {
+			return 200, b
+		}
+		return 404, nil
+	}
+}
+
+func enBundle(t *testing.T) []byte {
+	return signedBundle(t, newKeypair(t), testProjectID, "en-US", 2, "2026-06-09T18:00:00Z", sampleStrings())
+}
+
+func pullWithFallback(t *testing.T, primaryBase, fallbackBase string, clientTimeout time.Duration) (string, time.Duration, error) {
+	t.Helper()
+	meta := bundleMeta("en-US", 2, "2026-06-09T18:00:00Z", primaryBase+cdnPath("en-US"))
+	if fallbackBase != "" {
+		meta.FallbackURL = fallbackBase + cdnPath("en-US")
+	}
+	c := newAPI(t, []client.BundleStatus{meta})
+	dir := filepath.Join(t.TempDir(), "bundles")
+	start := time.Now()
+	_, err := Pull(c, Options{
+		Dir:                 dir,
+		EnvName:             "production",
+		CLIVersion:          "dev",
+		firstAttemptTimeout: 100 * time.Millisecond,
+		clientTimeout:       clientTimeout,
+	})
+	return dir, time.Since(start), err
+}
+
+func assertPulledFromFallback(t *testing.T, dir string, err error, fb *cdnServer, want []byte) {
+	t.Helper()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := fb.hits(cdnPath("en-US")); got != 1 {
+		t.Errorf("fallback hits = %d, want 1", got)
+	}
+	got, rerr := os.ReadFile(filepath.Join(dir, "en-US.json"))
+	if rerr != nil {
+		t.Fatal(rerr)
+	}
+	if !bytes.Equal(got, want) {
+		t.Error("written bundle is not the fallback artifact")
+	}
+}
+
+func TestPull_FailsOverOnHeaderTimeout(t *testing.T) {
+	en := enBundle(t)
+	hang, _ := newHangingHost(t)
+	fb := newCDN(t, serveBundles(map[string][]byte{cdnPath("en-US"): en}))
+
+	dir, elapsed, err := pullWithFallback(t, hang, fb.srv.URL, 0)
+
+	assertPulledFromFallback(t, dir, err, fb, en)
+	if elapsed >= 2*time.Second {
+		t.Errorf("failover took %v, want < 2s", elapsed)
+	}
+}
+
+func TestPull_FailsOverOn5xx(t *testing.T) {
+	en := enBundle(t)
+	cdn := newCDN(t, func(string, int) (int, []byte) { return 503, nil })
+	fb := newCDN(t, serveBundles(map[string][]byte{cdnPath("en-US"): en}))
+
+	dir, _, err := pullWithFallback(t, cdn.srv.URL, fb.srv.URL, 0)
+
+	assertPulledFromFallback(t, dir, err, fb, en)
+	if got := cdn.hits(cdnPath("en-US")); got != 1 {
+		t.Errorf("CDN hits = %d, want 1", got)
+	}
+}
+
+func TestPull_FailsOverOnConnRefused(t *testing.T) {
+	en := enBundle(t)
+	dead := httptest.NewServer(nil)
+	deadURL := dead.URL
+	dead.Close()
+	fb := newCDN(t, serveBundles(map[string][]byte{cdnPath("en-US"): en}))
+
+	dir, _, err := pullWithFallback(t, deadURL, fb.srv.URL, 0)
+
+	assertPulledFromFallback(t, dir, err, fb, en)
+}
+
+func TestPull_NoFailoverOn404(t *testing.T) {
+	en := enBundle(t)
+	cdn := newCDN(t, func(string, int) (int, []byte) { return 404, nil })
+	fb := newCDN(t, serveBundles(map[string][]byte{cdnPath("en-US"): en}))
+
+	_, _, err := pullWithFallback(t, cdn.srv.URL, fb.srv.URL, 0)
+
+	if err == nil || !strings.Contains(err.Error(), "404") {
+		t.Fatalf("expected 404 error, got %v", err)
+	}
+	if got := fb.hits(cdnPath("en-US")); got != 0 {
+		t.Errorf("fallback hits = %d, want 0", got)
+	}
+}
+
+func TestPull_NoFailoverOnSignatureFailure(t *testing.T) {
+	en := enBundle(t)
+	tampered := mutateBundle(t, en, func(m map[string]any) {
+		m["strings"].(map[string]any)["onboarding.welcome_title"].(map[string]any)["value"] = "tampered"
+	})
+	cdn := newCDN(t, serveBundles(map[string][]byte{cdnPath("en-US"): tampered}))
+	fb := newCDN(t, serveBundles(map[string][]byte{cdnPath("en-US"): en}))
+
+	_, _, err := pullWithFallback(t, cdn.srv.URL, fb.srv.URL, 0)
+
+	if err == nil || !strings.Contains(err.Error(), "signature") {
+		t.Fatalf("expected signature error, got %v", err)
+	}
+	if got := fb.hits(cdnPath("en-US")); got != 0 {
+		t.Errorf("fallback hits = %d, want 0", got)
+	}
+}
+
+func TestPull_NoFallbackURLSingleAttemptNoDeadline(t *testing.T) {
+	hang, accepts := newHangingHost(t)
+
+	_, elapsed, err := pullWithFallback(t, hang, "", 500*time.Millisecond)
+
+	if err == nil {
+		t.Fatal("expected timeout error")
+	}
+	if elapsed < 400*time.Millisecond || elapsed >= 5*time.Second {
+		t.Errorf("attempt took %v, want the 500ms client timeout (not the 100ms header deadline)", elapsed)
+	}
+	if got := accepts(); got != 1 {
+		t.Errorf("connections = %d, want exactly 1", got)
+	}
+}
+
+func TestPull_StickyAfterFailover(t *testing.T) {
+	kp := newKeypair(t)
+	en := signedBundle(t, kp, testProjectID, "en-US", 2, "2026-06-09T18:00:00Z", sampleStrings())
+	ja := signedBundle(t, kp, testProjectID, "ja", 5, "2026-06-09T18:00:00Z", map[string][2]string{"greeting": {"こんにちは", "text"}})
+	cdn := newCDN(t, func(string, int) (int, []byte) { return 503, nil })
+	fb := newCDN(t, serveBundles(map[string][]byte{cdnPath("en-US"): en, cdnPath("ja"): ja}))
+	metas := []client.BundleStatus{
+		bundleMeta("en-US", 2, "2026-06-09T18:00:00Z", cdn.srv.URL+cdnPath("en-US")),
+		bundleMeta("ja", 5, "2026-06-09T18:00:00Z", cdn.srv.URL+cdnPath("ja")),
+	}
+	metas[0].FallbackURL = fb.srv.URL + cdnPath("en-US")
+	metas[1].FallbackURL = fb.srv.URL + cdnPath("ja")
+	c := newAPI(t, metas)
+	dir := filepath.Join(t.TempDir(), "bundles")
+
+	_, err := Pull(c, Options{Dir: dir, EnvName: "production", CLIVersion: "dev", firstAttemptTimeout: 100 * time.Millisecond})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := cdn.hits(cdnPath("en-US")); got != 1 {
+		t.Errorf("CDN en-US hits = %d, want 1", got)
+	}
+	if got := cdn.hits(cdnPath("ja")); got != 0 {
+		t.Errorf("CDN ja hits = %d, want 0 (fallback should be sticky)", got)
+	}
+	if got := fb.hits(cdnPath("ja")); got != 1 {
+		t.Errorf("fallback ja hits = %d, want 1", got)
+	}
+}
+
+func TestPull_BodyReadNotBoundByHeaderDeadline(t *testing.T) {
+	en := enBundle(t)
+	slow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.(http.Flusher).Flush()
+		time.Sleep(300 * time.Millisecond)
+		w.Write(en)
+	}))
+	t.Cleanup(slow.Close)
+	fb := newCDN(t, serveBundles(map[string][]byte{cdnPath("en-US"): en}))
+
+	dir, _, err := pullWithFallback(t, slow.URL, fb.srv.URL, 0)
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := fb.hits(cdnPath("en-US")); got != 0 {
+		t.Errorf("fallback hits = %d, want 0", got)
+	}
+	got, rerr := os.ReadFile(filepath.Join(dir, "en-US.json"))
+	if rerr != nil {
+		t.Fatal(rerr)
+	}
+	if !bytes.Equal(got, en) {
+		t.Error("written bundle is not the CDN artifact")
+	}
+}
+
+func TestPull_FailsOverOnBodyDrop(t *testing.T) {
+	en := enBundle(t)
+	drop := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, buf, err := w.(http.Hijacker).Hijack()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		fmt.Fprintf(buf, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: %d\r\n\r\n", len(en)+1000)
+		buf.Write(en[:10])
+		buf.Flush()
+	}))
+	t.Cleanup(drop.Close)
+	fb := newCDN(t, serveBundles(map[string][]byte{cdnPath("en-US"): en}))
+
+	dir, _, err := pullWithFallback(t, drop.URL, fb.srv.URL, 0)
+
+	assertPulledFromFallback(t, dir, err, fb, en)
 }

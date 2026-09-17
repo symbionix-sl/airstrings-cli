@@ -2,6 +2,7 @@ package bundlepull
 
 import (
 	"bytes"
+	"context"
 	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/json"
@@ -19,6 +20,7 @@ import (
 	"time"
 
 	"github.com/symbionix-sl/airstrings-cli/internal/client"
+	"github.com/symbionix-sl/airstrings-cli/internal/output"
 	"github.com/symbionix-sl/airstrings-cli/internal/workspace"
 )
 
@@ -32,6 +34,9 @@ type Options struct {
 	Locale     string
 	EnvName    string
 	CLIVersion string
+
+	firstAttemptTimeout time.Duration
+	clientTimeout       time.Duration
 }
 
 type PulledBundle struct {
@@ -180,13 +185,21 @@ func Pull(c *client.Client, opts Options) (*Result, error) {
 		}
 	}
 
-	hc := &http.Client{Timeout: 30 * time.Second}
+	first := opts.firstAttemptTimeout
+	if first == 0 {
+		first = 5 * time.Second
+	}
+	timeout := opts.clientTimeout
+	if timeout == 0 {
+		timeout = 30 * time.Second
+	}
+	f := &fetcher{hc: &http.Client{Timeout: timeout}, first: first}
 	files := make([]stagedFile, 0, len(selected))
 	pulled := make([]PulledBundle, 0, len(selected))
 	entries := make([]ManifestEntry, 0, len(selected))
 	pulledSet := make(map[string]bool, len(selected))
 	for _, m := range selected {
-		data, err := fetchVerified(hc, m)
+		data, err := f.fetchVerified(m)
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", m.Locale, err)
 		}
@@ -292,15 +305,21 @@ func applyStaged(dir string, files []stagedFile, manifest *Manifest, stale []str
 	return nil
 }
 
-func fetchVerified(hc *http.Client, meta client.BundleStatus) ([]byte, error) {
-	data, err := fetchBundle(hc, meta.CDNURL)
+type fetcher struct {
+	hc             *http.Client
+	first          time.Duration
+	preferFallback bool
+}
+
+func (f *fetcher) fetchVerified(meta client.BundleStatus) ([]byte, error) {
+	data, err := f.fetch(meta, false)
 	if err != nil {
 		return nil, err
 	}
 	verr := verifyBundle(data, meta)
 	var rm *revisionMismatchError
 	if errors.As(verr, &rm) {
-		data, err = fetchBundle(hc, cacheBustURL(meta.CDNURL))
+		data, err = f.fetch(meta, true)
 		if err != nil {
 			return nil, err
 		}
@@ -312,18 +331,90 @@ func fetchVerified(hc *http.Client, meta client.BundleStatus) ([]byte, error) {
 	return data, nil
 }
 
-func fetchBundle(hc *http.Client, rawURL string) ([]byte, error) {
-	resp, err := hc.Get(rawURL)
+func (f *fetcher) fetch(meta client.BundleStatus, bust bool) ([]byte, error) {
+	urls := []string{meta.CDNURL}
+	var deadline time.Duration
+	if meta.FallbackURL != "" {
+		urls = append(urls, meta.FallbackURL)
+		deadline = f.first
+		if f.preferFallback {
+			urls[0], urls[1] = urls[1], urls[0]
+		}
+	}
+	if bust {
+		for i := range urls {
+			urls[i] = cacheBustURL(urls[i])
+		}
+	}
+	data, err := fetchBundle(f.hc, urls[0], deadline)
+	if err == nil || len(urls) == 1 || !retryable(err) {
+		return data, err
+	}
+	output.Warnf("bundle download from %s failed, retrying via %s", hostOf(urls[0]), hostOf(urls[1]))
+	data, err = fetchBundle(f.hc, urls[1], 0)
 	if err != nil {
 		return nil, err
 	}
+	f.preferFallback = !f.preferFallback
+	return data, nil
+}
+
+type transportError struct {
+	err error
+}
+
+func (e *transportError) Error() string { return e.err.Error() }
+func (e *transportError) Unwrap() error { return e.err }
+
+type statusError struct {
+	url    string
+	code   int
+	status string
+}
+
+func (e *statusError) Error() string {
+	return fmt.Sprintf("GET %s: unexpected status %s", e.url, e.status)
+}
+
+func retryable(err error) bool {
+	var te *transportError
+	var se *statusError
+	return errors.As(err, &te) || (errors.As(err, &se) && se.code >= 500)
+}
+
+func hostOf(rawURL string) string {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return "unknown host"
+	}
+	return u.Host
+}
+
+func fetchBundle(hc *http.Client, rawURL string, deadline time.Duration) ([]byte, error) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	var timer *time.Timer
+	if deadline > 0 {
+		timer = time.AfterFunc(deadline, cancel)
+	}
+	resp, err := hc.Do(req)
+	if timer != nil {
+		timer.Stop()
+	}
+	if err != nil {
+		return nil, &transportError{err: err}
+	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("GET %s: unexpected status %s", rawURL, resp.Status)
+		return nil, &statusError{url: rawURL, code: resp.StatusCode, status: resp.Status}
 	}
 	data, err := io.ReadAll(io.LimitReader(resp.Body, maxBundleBytes+1))
 	if err != nil {
-		return nil, fmt.Errorf("read bundle: %w", err)
+		return nil, &transportError{err: fmt.Errorf("read bundle: %w", err)}
 	}
 	if len(data) > maxBundleBytes {
 		return nil, fmt.Errorf("bundle exceeds %d bytes", maxBundleBytes)
