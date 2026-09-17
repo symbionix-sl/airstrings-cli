@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.15.0] - 2026-09-17
+
+### Added
+
+- `bundles pull` fails over to the fallback host reported by the API (`fallback_url` in bundle status) when the CDN is unreachable. With a fallback present, the CDN attempt gets a 5s deadline to response headers; on timeout, transport error or HTTP 5xx the bundle is downloaded once from the fallback host, with a warning on stderr. 4xx responses and signature failures never fail over.
+- The host that succeeded is tried first for the remaining locales in the same pull. Without a fallback URL, behaviour is unchanged. Signature verification is unchanged.
+
 ## [0.14.1] - 2026-07-18
 
 ### Fixed
