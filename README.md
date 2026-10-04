@@ -1,6 +1,15 @@
 # airstrings
 
-Command-line interface for [AirStrings](https://airstrings.com) — manage strings, locales, bundles, and publishing from the terminal.
+CLI and MCP server for [AirStrings](https://airstrings.com): over-the-air string updates for iOS, Android, web and React Native apps.
+
+Manage strings and locales from the terminal or let an AI agent do it over MCP. `airstrings publish` has AirStrings sign the bundle (Ed25519) and push it to the CDN; the SDKs verify the signature before showing anything.
+
+```bash
+npm install -g @airstrings/cli        # or: brew install symbionix-sl/airstrings/airstrings
+airstrings mcp install                # register the MCP server with Claude Code
+```
+
+Listed in the [MCP Registry](https://registry.modelcontextprotocol.io) as `io.github.symbionix-sl/airstrings-cli`.
 
 ## Install
 
