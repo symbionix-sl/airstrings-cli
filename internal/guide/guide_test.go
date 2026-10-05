@@ -1,6 +1,7 @@
 package guide
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -29,5 +30,20 @@ func TestStatusHintQuotesEnvName(t *testing.T) {
 	h = ProtectedNoKey("prod\x1b[2J", "")
 	if strings.Contains(h.Message+h.NextStep, "\x1b") {
 		t.Errorf("control characters in hint: %q", h.Message+h.NextStep)
+	}
+}
+
+func TestJSSnippetsCarryRequiredConfigFields(t *testing.T) {
+	required := []string{"organizationId", "projectId", "environmentId", "publicKeys", "locale"}
+	field := regexp.MustCompile(`(?m)^  (\w+):`)
+	sn := Snippets("org_x", "proj_x", "env_x", []string{"K"})
+	for _, p := range []string{"web", "react_native"} {
+		var got []string
+		for _, m := range field.FindAllStringSubmatch(sn[p], -1) {
+			got = append(got, m[1])
+		}
+		if strings.Join(got, ",") != strings.Join(required, ",") {
+			t.Errorf("%s snippet fields = %v, want %v", p, got, required)
+		}
 	}
 }

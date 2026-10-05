@@ -54,8 +54,8 @@ func main() {
 		}
 	}
 
-	// Handle shorthand flags: -p -u <project>, -e -u <env>, chainable
-	if handleShorthandFlags(args) {
+	args, done := handleShorthandFlags(args)
+	if done {
 		return
 	}
 
@@ -137,7 +137,7 @@ Navigation:
   env use <name>                        Switch active environment
   env add <api-key> [--url <base-url>]  Add environment credentials
   env rm <name>                         Remove environment credentials
-  -e -u <env-name>                      Switch environment (shorthand)
+  -e -u <env-name> [command]            Switch environment (shorthand), then run command
   locales                               List locales with string counts
   sdk-config [--env <name>]             IDs + public keys + SDK snippets for an
                                         environment (default: production). Works
@@ -277,7 +277,7 @@ Show current project info.
   env add <api-key> [--url <base-url>]  Add environment credentials
   env rm <name>                         Remove environment credentials
   env create <name>                     Create a new environment
-  -e -u <env-name>                      Switch environment (shorthand)
+  -e -u <env-name> [command]            Switch environment (shorthand), then run command
 
 Flags:
   --url, --base-url <url>   API base URL (env add)
@@ -459,6 +459,7 @@ func mustClient() *client.Client {
 		if err != nil {
 			failAPI("resolve credentials from environment", err)
 		}
+		noticeEnvOverride()
 		return c
 	}
 	_, wsCfg := mustWorkspace()
@@ -476,6 +477,7 @@ func clientFor(wsCfg *workspace.WorkspaceConfig) *client.Client {
 		if err != nil {
 			failAPI("resolve credentials from environment", err)
 		}
+		noticeEnvOverride()
 		return c
 	}
 	c, err := workspace.ResolveClient(wsCfg)
@@ -483,6 +485,12 @@ func clientFor(wsCfg *workspace.WorkspaceConfig) *client.Client {
 		output.Errorf("%s", err)
 	}
 	return c
+}
+
+func noticeEnvOverride() {
+	if name, ok := workspace.EnvOverride(); ok {
+		fmt.Fprintf(os.Stderr, "Using environment %s from AIRSTRINGS_ENV_ID (overrides the workspace's active environment).\n", client.StripControl(name))
+	}
 }
 
 // mustSharedClient returns a client for the org shared-key bucket, resolved from
@@ -525,44 +533,28 @@ func rollback(restore func() error) string {
 	return " (local CSV restored — nothing changed)"
 }
 
-// handleShorthandFlags processes -e -u <name> flags.
-// Returns true if flags were handled (no further command processing needed).
-func handleShorthandFlags(args []string) bool {
-	if len(args) == 0 || args[0][0] != '-' || args[0] == "--json" || args[0] == "--help" || args[0] == "--version" || args[0] == "-h" {
-		return false
+// handleShorthandFlags applies leading -e -u <name> flags and returns the
+// remaining args; done is true when no command follows the flags.
+func handleShorthandFlags(args []string) ([]string, bool) {
+	if len(args) < 3 || (args[0] != "-e" && args[0] != "--env") {
+		return args, false
 	}
-
 	wsDir, wsCfg := mustWorkspace()
-
-	changed := false
-	i := 0
-	for i < len(args) {
-		if (args[i] == "-e" || args[i] == "--env") && i+2 < len(args) && (args[i+1] == "-u" || args[i+1] == "--use") {
-			name := args[i+2]
-			switchEnv(wsCfg, name)
-			changed = true
-			i += 3
-		} else {
-			break
+	for len(args) > 0 && (args[0] == "-e" || args[0] == "--env") {
+		if len(args) < 3 || (args[1] != "-u" && args[1] != "--use") {
+			output.Fail(output.ExitUsage, "usage: airstrings -e -u <env-name> [command]")
 		}
+		switchEnv(wsCfg, args[2])
+		args = args[3:]
 	}
-
-	if !changed {
-		return false
-	}
-
 	if err := workspace.SaveConfig(wsDir, wsCfg); err != nil {
 		output.Errorf("save workspace: %s", err)
 	}
-
-	// If there are remaining args after flags, they're a command — don't handle here
-	if i < len(args) {
-		return false
+	if len(args) > 0 {
+		return args, false
 	}
-
-	// No command after flags — print status
 	printStatus(wsDir, wsCfg)
-	return true
+	return nil, true
 }
 
 func switchEnv(wsCfg *workspace.WorkspaceConfig, name string) {
@@ -635,62 +627,19 @@ func statusClient() *client.Client {
 	return c
 }
 
-type statusDetails struct {
-	Protection string
-	KeyScope   string
-	Hint       *guide.Hint
+func statusInfo(wsCfg *workspace.WorkspaceConfig, apiKey string) guide.Details {
+	var hasKey func(string) bool
+	if wsCfg != nil {
+		hasKey = func(id string) bool { return wsCfg.FindByEnvID(id) != nil }
+	}
+	return guide.Inspect(statusClient(), apiKey, hasKey)
 }
 
-// statusInfo derives protection ("protected"/"open"/"unknown"), the key's scope
-// ("read"/"write"/"unknown") and the state hint. Best-effort: it never fails.
-func statusInfo(wsCfg *workspace.WorkspaceConfig, apiKey string) statusDetails {
-	d := statusDetails{Protection: "unknown", KeyScope: "unknown"}
-	c := statusClient()
-	if c == nil {
-		return d
-	}
-	if keys, err := c.ListAPIKeys(); err == nil && len(apiKey) >= 8 {
-		for _, k := range keys.Data {
-			if k.Prefix == apiKey[:8] {
-				d.KeyScope = k.Permission
-			}
-		}
-	}
-	envs, err := c.ListEnvironments()
-	if err != nil {
-		return d
-	}
-	var active, def *client.Environment
-	for i := range envs {
-		if envs[i].ID == c.EnvID() {
-			active = &envs[i]
-		}
-		if envs[i].IsDefault {
-			def = &envs[i]
-		}
-	}
-	if def == nil || active == nil {
-		return d
-	}
-	d.Protection = guide.Protection(def.IsSealed)
-	defKey := def.ID == active.ID || (wsCfg != nil && wsCfg.FindByEnvID(def.ID) != nil)
-	dash := c.DashboardURL("")
-	h := guide.Status(active.Name, active.IsDefault, def.Name, def.IsSealed, defKey,
-		guide.PromoteURL(dash, c.ProjectID(), def.ID), guide.APIKeysURL(dash, c.ProjectID(), def.ID))
-	d.Hint = &h
-	return d
-}
-
-// protectionLine renders the human-readable protection descriptor.
-func protectionLine(p string) string {
-	switch p {
-	case "protected":
-		return "protected (production changes arrive only by promotion)"
-	case "open":
-		return "open (production accepts direct publishing)"
-	default:
+func protectionLine(d guide.Details) string {
+	if d.Summary == "" {
 		return "unknown (API unreachable)"
 	}
+	return d.Summary
 }
 
 func printHint(h *guide.Hint) {
@@ -726,18 +675,19 @@ func printStatus(wsDir string, wsCfg *workspace.WorkspaceConfig) {
 			})
 		}
 		output.JSON(map[string]any{
-			"source":        "workspace",
-			"workspace_dir": wsDir,
-			"mode":          workspace.DetectMode(wsDir),
-			"project_id":    wsCfg.ProjectID,
-			"project_name":  wsCfg.ProjectName,
-			"env_id":        cred.EnvID,
-			"env_name":      cred.EnvName,
-			"base_url":      url,
-			"protection":    info.Protection,
-			"key_scope":     info.KeyScope,
-			"hint":          info.Hint,
-			"environments":  envs,
+			"source":            "workspace",
+			"workspace_dir":     wsDir,
+			"mode":              workspace.DetectMode(wsDir),
+			"project_id":        wsCfg.ProjectID,
+			"project_name":      wsCfg.ProjectName,
+			"env_id":            cred.EnvID,
+			"env_name":          cred.EnvName,
+			"base_url":          url,
+			"protection":        info.Protection,
+			"protection_by_env": info.ProtectionByEnv,
+			"key_scope":         info.KeyScope,
+			"hint":              info.Hint,
+			"environments":      envs,
 		})
 		return
 	}
@@ -746,7 +696,7 @@ func printStatus(wsDir string, wsCfg *workspace.WorkspaceConfig) {
 	fmt.Printf("Env:      %s (%s)\n", cred.EnvName, cred.EnvID)
 	fmt.Printf("API URL:  %s\n", url)
 	fmt.Printf("Key:      %s...%s (%s)\n", cred.APIKey[:8], cred.APIKey[len(cred.APIKey)-4:], info.KeyScope)
-	fmt.Printf("Protection: %s\n", protectionLine(info.Protection))
+	fmt.Printf("Protection: %s\n", protectionLine(info))
 	printHint(info.Hint)
 }
 
@@ -768,13 +718,14 @@ func printEnvStatus(env workspace.EnvAuth) {
 
 	if output.JSONMode {
 		output.JSON(map[string]any{
-			"source":     "env",
-			"project_id": env.ProjectID,
-			"env_id":     env.EnvID,
-			"base_url":   base,
-			"protection": info.Protection,
-			"key_scope":  info.KeyScope,
-			"hint":       info.Hint,
+			"source":            "env",
+			"project_id":        env.ProjectID,
+			"env_id":            env.EnvID,
+			"base_url":          base,
+			"protection":        info.Protection,
+			"protection_by_env": info.ProtectionByEnv,
+			"key_scope":         info.KeyScope,
+			"hint":              info.Hint,
 		})
 		return
 	}
@@ -792,7 +743,7 @@ func printEnvStatus(env workspace.EnvAuth) {
 	fmt.Printf("Env:      %s\n", envID)
 	fmt.Printf("API URL:  %s\n", base)
 	fmt.Printf("Key:      %s (%s)\n", masked, info.KeyScope)
-	fmt.Printf("Protection: %s\n", protectionLine(info.Protection))
+	fmt.Printf("Protection: %s\n", protectionLine(info))
 	printHint(info.Hint)
 }
 
@@ -861,7 +812,7 @@ func addCredentials(wsCfg *workspace.WorkspaceConfig, apiKey, baseURL, projectID
 		full, err := probe.GetEnvironment(env.ID)
 		if err != nil {
 			var apiErr *client.APIError
-			if errors.As(err, &apiErr) && apiErr.StatusCode == 404 {
+			if errors.As(err, &apiErr) && (apiErr.StatusCode == 404 || apiErr.StatusCode == 403) {
 				continue
 			}
 			probeErr = err
@@ -1091,16 +1042,7 @@ func handleEnv(args []string) {
 
 	_, wsCfg := mustWorkspace()
 
-	type envRow struct {
-		client.Environment
-		Protection     string `json:"protection"`
-		KeyInWorkspace bool   `json:"key_in_workspace"`
-		Active         bool   `json:"active"`
-	}
-	list := make([]envRow, len(envs))
-	for i, e := range envs {
-		list[i] = envRow{e, guide.Protection(e.IsSealed), wsCfg.FindByEnvID(e.ID) != nil, e.ID == wsCfg.ActiveEnv}
-	}
+	list := guide.EnvRows(envs, func(id string) bool { return wsCfg.FindByEnvID(id) != nil }, wsCfg.ActiveEnv)
 
 	if output.JSONMode {
 		output.JSON(list)
@@ -2296,7 +2238,7 @@ func handleSDKConfig(args []string) {
 		output.JSON(map[string]any{
 			"org_id":      cfg.OrgID,
 			"project_id":  cfg.ProjectID,
-			"environment": env,
+			"environment": guide.SDKEnvironment(*env),
 			"protection":  guide.Protection(env.IsSealed),
 			"snippets":    snippets,
 		})

@@ -239,6 +239,27 @@ func EnvAuthFromEnv() (EnvAuth, bool) {
 	}, true
 }
 
+// EnvOverride reports the environment AIRSTRINGS_ENV_ID selects when it
+// differs from the active environment of the workspace in the current directory.
+func EnvOverride() (string, bool) {
+	env, ok := EnvAuthFromEnv()
+	if !ok || env.EnvID == "" {
+		return "", false
+	}
+	dir, err := Find()
+	if err != nil {
+		return "", false
+	}
+	cfg, err := LoadConfig(dir)
+	if err != nil || cfg.ActiveEnv == env.EnvID {
+		return "", false
+	}
+	if cred := cfg.FindByEnvID(env.EnvID); cred != nil {
+		return cred.EnvName, true
+	}
+	return env.EnvID, true
+}
+
 // ClientFromEnv builds an API client from AIRSTRINGS_* environment variables,
 // overriding any on-disk workspace. The second return is false when
 // AIRSTRINGS_API_KEY is unset. When set but project/env are not provided, they

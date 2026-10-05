@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.16.1] - Unreleased
+
+### Added
+
+- MCP tools `airstrings_status` and `airstrings_env_list`, mirroring `status --json` and `env --json`.
+- When `AIRSTRINGS_ENV_ID` selects a different environment than the workspace's active one, a one-line notice naming it is printed to stderr.
+
+### Changed
+
+- `status` labels protection per environment (`Protection: staging: open · production: protected`; `protection_by_env` in JSON).
+- A workspace holding only a key for protected production is told to create a staging write key, `env add` it, publish to staging, then promote.
+- `sdk-config --json` (and the MCP tool) report `environment.protected` instead of `is_sealed`.
+- Web and React Native SDK snippets include the required `locale` field.
+
+### Fixed
+
+- `-e -u <env-name>` followed by a command now switches and runs the command.
+- `env add` treats a 403 on another environment's probe like a 404 (servers now answer 403 with guidance for environments of the same project).
+
 ## [0.16.0] - Unreleased
 
 ### Added

@@ -229,3 +229,104 @@ func TestPromotePreviewPrintsApplyLink(t *testing.T) {
 		t.Errorf("missing apply link:\n%s", stdout)
 	}
 }
+
+func workspaceWith(t *testing.T, srvURL, active string, creds ...string) string {
+	dir := t.TempDir()
+	wsDir := filepath.Join(dir, ".airstrings")
+	if err := os.MkdirAll(wsDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	var list []string
+	for _, name := range creds {
+		list = append(list, `{"api_key":"`+name+`key0000000000","base_url":"`+srvURL+`","env_id":"env_`+strings.TrimSuffix(name, "uction")+`","env_name":"`+name+`"}`)
+	}
+	seed := `{"project_id":"proj_test","project_name":"Test","active_env":"` + active + `","credentials":[` + strings.Join(list, ",") + `]}`
+	if err := os.WriteFile(filepath.Join(wsDir, "config.json"), []byte(seed), 0600); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+func TestStatusLabelsProtectionPerEnvironment(t *testing.T) {
+	srv := guidanceServer(t, true, nil)
+	dir := stagingWorkspace(t, srv.URL)
+	code, stdout, stderr := runSharedInDir(t, dir, nil, "status")
+	if code != 0 {
+		t.Fatalf("exit = %d\nstderr: %s", code, stderr)
+	}
+	if !strings.Contains(stdout, "Protection: production: protected · staging: open\n") {
+		t.Errorf("status protection line ambiguous:\n%s", stdout)
+	}
+	_, stdout, _ = runSharedInDir(t, dir, nil, "status", "--json")
+	var out struct {
+		ProtectionByEnv map[string]string `json:"protection_by_env"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &out); err != nil || out.ProtectionByEnv["staging"] != "open" || out.ProtectionByEnv["production"] != "protected" {
+		t.Errorf("protection_by_env = %+v (%v)\n%s", out.ProtectionByEnv, err, stdout)
+	}
+}
+
+func TestStatusProductionOnlyKeyNeedsStagingKey(t *testing.T) {
+	srv := guidanceServer(t, true, nil)
+	dir := workspaceWith(t, srv.URL, "env_prod", "production")
+	code, stdout, stderr := runSharedInDir(t, dir, nil, "status")
+	if code != 0 {
+		t.Fatalf("exit = %d\nstderr: %s", code, stderr)
+	}
+	for _, w := range []string{"Production is protected: changes reach it only by promotion.", "Create a staging write key at ", "/projects/proj_test/env/env_staging/api-keys and run `airstrings env add <key>`, publish to staging, then ask a human to promote: ", "/projects/proj_test/env/env_prod/promote"} {
+		if !strings.Contains(stdout, w) {
+			t.Errorf("status missing %q\n%s", w, stdout)
+		}
+	}
+}
+
+func TestSDKConfigJSONSaysProtected(t *testing.T) {
+	srv := guidanceServer(t, true, nil)
+	dir := stagingWorkspace(t, srv.URL)
+	_, stdout, stderr := runSharedInDir(t, dir, nil, "sdk-config", "--json")
+	var out struct {
+		Environment map[string]any `json:"environment"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &out); err != nil {
+		t.Fatalf("json: %v\n%s%s", err, stdout, stderr)
+	}
+	if out.Environment["protected"] != true {
+		t.Errorf("environment.protected = %v", out.Environment["protected"])
+	}
+	if _, ok := out.Environment["is_sealed"]; ok {
+		t.Errorf("environment still exposes is_sealed: %v", out.Environment)
+	}
+}
+
+func TestShorthandEnvUseThenCommand(t *testing.T) {
+	srv := guidanceServer(t, true, nil)
+	dir := workspaceWith(t, srv.URL, "env_staging", "staging", "production")
+	code, stdout, stderr := runSharedInDir(t, dir, nil, "-e", "-u", "production", "status", "--json")
+	if code != 0 {
+		t.Fatalf("exit = %d\nstderr: %s", code, stderr)
+	}
+	if !strings.Contains(stdout, `"env_name": "production"`) {
+		t.Errorf("-e -u production status did not switch:\n%s", stdout)
+	}
+	code, stdout, stderr = runSharedInDir(t, dir, nil, "-e", "-u", "staging")
+	if code != 0 || !strings.Contains(stdout, "Env:      staging (env_staging)") {
+		t.Errorf("-e -u staging: exit %d\n%s%s", code, stdout, stderr)
+	}
+}
+
+func TestEnvIDOverrideNotice(t *testing.T) {
+	srv := guidanceServer(t, true, nil)
+	dir := workspaceWith(t, srv.URL, "env_staging", "staging", "production")
+	env := []string{"AIRSTRINGS_API_KEY=prodkey", "AIRSTRINGS_PROJECT_ID=proj_test", "AIRSTRINGS_ENV_ID=env_prod", "AIRSTRINGS_BASE_URL=" + srv.URL}
+	code, _, stderr := runSharedInDir(t, dir, env, "env")
+	if code != 0 {
+		t.Fatalf("exit = %d\nstderr: %s", code, stderr)
+	}
+	if !strings.Contains(stderr, "Using environment production from AIRSTRINGS_ENV_ID") {
+		t.Errorf("missing override notice:\n%s", stderr)
+	}
+	_, _, stderr = runSharedInDir(t, dir, []string{"AIRSTRINGS_API_KEY=stagingkey", "AIRSTRINGS_PROJECT_ID=proj_test", "AIRSTRINGS_ENV_ID=env_staging", "AIRSTRINGS_BASE_URL=" + srv.URL}, "env")
+	if strings.Contains(stderr, "AIRSTRINGS_ENV_ID") {
+		t.Errorf("notice printed without an override:\n%s", stderr)
+	}
+}
