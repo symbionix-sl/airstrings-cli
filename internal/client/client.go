@@ -3,6 +3,7 @@ package client
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -10,6 +11,7 @@ import (
 	"net/url"
 	"strings"
 	"time"
+	"unicode"
 )
 
 const defaultBaseURL = "https://api.airstrings.com"
@@ -20,6 +22,7 @@ type Client struct {
 	apiKey     string
 	projectID  string
 	envID      string
+	baseErr    error
 	httpClient *http.Client
 }
 
@@ -33,14 +36,76 @@ func New(apiKey, baseURL, projectID, envID string) *Client {
 		apiKey:    apiKey,
 		projectID: projectID,
 		envID:     envID,
+		baseErr:   ValidateBaseURL(baseURL),
 		httpClient: &http.Client{
-			Timeout: 30 * time.Second,
+			Timeout:       30 * time.Second,
+			CheckRedirect: sameOriginRedirect,
 		},
 	}
 }
 
+// StripControl removes control characters (including ESC) from server-provided text before it reaches a terminal.
+func StripControl(s string) string {
+	return strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return -1
+		}
+		return r
+	}, s)
+}
+
+func (b *ErrorResponse) sanitize() {
+	b.Error.Message = StripControl(b.Error.Message)
+	b.Error.NextStep = StripControl(b.Error.NextStep)
+	for i := range b.Error.Details {
+		b.Error.Details[i].Field = StripControl(b.Error.Details[i].Field)
+		b.Error.Details[i].Reason = StripControl(b.Error.Details[i].Reason)
+	}
+}
+
+// ValidateBaseURL accepts https URLs, and http only for loopback hosts.
+func ValidateBaseURL(raw string) error {
+	u, err := url.Parse(raw)
+	if err == nil && u.Host != "" {
+		switch u.Scheme {
+		case "https":
+			return nil
+		case "http":
+			switch u.Hostname() {
+			case "localhost", "127.0.0.1", "::1":
+				return nil
+			}
+		}
+	}
+	return fmt.Errorf("invalid API URL %q: use https:// (http:// is allowed only for localhost, 127.0.0.1 or ::1)", raw)
+}
+
+func sameOriginRedirect(req *http.Request, via []*http.Request) error {
+	if len(via) >= 10 {
+		return errors.New("stopped after 10 redirects")
+	}
+	if req.URL.Scheme != via[0].URL.Scheme || req.URL.Host != via[0].URL.Host {
+		return fmt.Errorf("refusing redirect from %s to %s://%s: the API key is only sent to the configured API URL", via[0].URL.Host, req.URL.Scheme, req.URL.Host)
+	}
+	return nil
+}
+
 func (c *Client) ProjectID() string { return c.projectID }
 func (c *Client) EnvID() string     { return c.envID }
+
+// DashboardURL maps the API host to its webapp host (api.X → app.X,
+// api-staging.X → app-staging.X) and appends path.
+func (c *Client) DashboardURL(path string) string {
+	return DashboardBase(c.baseURL) + path
+}
+
+func DashboardBase(apiBase string) string {
+	u, err := url.Parse(apiBase)
+	if err != nil || !strings.HasPrefix(u.Host, "api") {
+		return "https://app.airstrings.com"
+	}
+	return u.Scheme + "://app" + strings.TrimPrefix(u.Host, "api")
+}
 
 // APIError represents a structured error from the API.
 type APIError struct {
@@ -54,6 +119,9 @@ func (e *APIError) Error() string {
 		for _, d := range e.Body.Error.Details {
 			msg += fmt.Sprintf("\n  - %s: %s", d.Field, d.Reason)
 		}
+		if e.Body.Error.NextStep != "" {
+			msg += "\nNext step: " + e.Body.Error.NextStep
+		}
 		return msg
 	}
 	return fmt.Sprintf("API error %d", e.StatusCode)
@@ -62,6 +130,12 @@ func (e *APIError) Error() string {
 // ExitCode maps an HTTP status to a CLI exit code so scripts and agents can
 // branch on the failure class. Values mirror internal/output exit codes.
 func (e *APIError) ExitCode() int {
+	switch e.Body.Error.Code {
+	case "environment_protected":
+		return 7
+	case "quota_exceeded":
+		return 8
+	}
 	switch e.StatusCode {
 	case 401, 403:
 		return 3 // auth
@@ -86,9 +160,10 @@ type ErrorResponse struct {
 }
 
 type ErrorBody struct {
-	Code    string            `json:"code"`
-	Message string            `json:"message"`
-	Details []ValidationError `json:"details,omitempty"`
+	Code     string            `json:"code"`
+	Message  string            `json:"message"`
+	NextStep string            `json:"next_step,omitempty"`
+	Details  []ValidationError `json:"details,omitempty"`
 }
 
 type ValidationError struct {
@@ -97,6 +172,9 @@ type ValidationError struct {
 }
 
 func (c *Client) do(method, path string, query url.Values, body any, result any) error {
+	if c.baseErr != nil {
+		return c.baseErr
+	}
 	u := c.baseURL + path
 	if len(query) > 0 {
 		u += "?" + query.Encode()
@@ -142,6 +220,7 @@ func (c *Client) do(method, path string, query url.Values, body any, result any)
 		apiErr.StatusCode = resp.StatusCode
 		if isJSON || looksLikeJSON {
 			_ = json.Unmarshal(respBody, &apiErr.Body)
+			apiErr.Body.sanitize()
 		}
 		if apiErr.Body.Error.Message == "" && !isJSON && !looksLikeJSON {
 			apiErr.Body.Error.Message = fmt.Sprintf("unexpected response from %s (got %s, expected JSON) — check your --url value", c.baseURL, ct)
@@ -186,6 +265,9 @@ func (c *Client) doMultipart(path string, fields map[string]string, fileName str
 		return fmt.Errorf("close multipart writer: %w", err)
 	}
 
+	if c.baseErr != nil {
+		return c.baseErr
+	}
 	u := c.baseURL + path
 
 	req, err := http.NewRequest("POST", u, &body)
@@ -199,7 +281,8 @@ func (c *Client) doMultipart(path string, fields map[string]string, fileName str
 
 	// Use a longer timeout for multipart uploads
 	uploadClient := &http.Client{
-		Timeout: 5 * time.Minute,
+		Timeout:       5 * time.Minute,
+		CheckRedirect: sameOriginRedirect,
 	}
 
 	resp, err := uploadClient.Do(req)
@@ -222,6 +305,7 @@ func (c *Client) doMultipart(path string, fields map[string]string, fileName str
 		apiErr.StatusCode = resp.StatusCode
 		if isJSON || looksLikeJSON {
 			_ = json.Unmarshal(respBody, &apiErr.Body)
+			apiErr.Body.sanitize()
 		}
 		if apiErr.Body.Error.Message == "" && !isJSON && !looksLikeJSON {
 			apiErr.Body.Error.Message = fmt.Sprintf("unexpected response from %s (got %s, expected JSON) — check your --url value", c.baseURL, ct)

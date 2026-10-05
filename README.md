@@ -48,21 +48,33 @@ Initialize a workspace in your project directory:
 
 ```bash
 cd my-project
-airstrings init ask_live_xxxxxxxxxxxx
+airstrings init <staging-write-key>
 ```
 
-This validates the key, auto-detects your project and environments, and stores everything in `.airstrings/config.json`. Each project has its own workspace — no shared global config.
+Use the **staging write key** shown during onboarding in the dashboard. API keys are 64-character hex strings (e.g. `3f9c…e21a`) scoped to one project and one environment. This validates the key, auto-detects your project and environments, and stores everything in `.airstrings/config.json`. Each project has its own workspace — no shared global config.
+
+Production is **protected** by default: it rejects direct writes and publishing, and changes reach it only when a human promotes staging in the dashboard. An agent therefore never needs a production key — it publishes to staging, and `airstrings sdk-config --env production` gives it everything the SDK needs for production.
 
 ### Environments
 
 ```bash
-airstrings env                      # list environments (✓ = active)
+airstrings env                      # every environment: protected/open, key in workspace or not
 airstrings env use staging          # switch to staging
 airstrings env add <api-key>        # add credentials for another environment
 airstrings env rm staging           # remove environment credentials
 airstrings -e -u staging            # shorthand for env use
-airstrings status                   # show current project, env, and key
+airstrings status                   # project, env, key scope, protection + next step
 ```
+
+### SDK configuration
+
+```bash
+airstrings sdk-config                     # production (default) IDs, public key, SDK snippets
+airstrings sdk-config --env staging       # another environment
+airstrings sdk-config --env production --json
+```
+
+Prints the organization, project and environment IDs, the environment's Ed25519 public key(s), and a ready-to-paste initializer for the Web, React Native, iOS and Android SDKs. Public keys are not secret, so any key of the project works — a staging key prints production's config.
 
 ## Usage
 
@@ -74,7 +86,7 @@ airstrings <command> [options]
 
 ```bash
 airstrings project                  # Show project info
-airstrings env                      # List environments
+airstrings env                      # List environments with protection and key state
 airstrings env use staging          # Switch active environment
 airstrings env create staging       # Create a new environment
 airstrings locales                  # List locales with string counts
@@ -111,7 +123,10 @@ airstrings sections delete sec_xxxxx
 airstrings bundles                  # List published bundles
 airstrings publish                  # Publish all locales
 airstrings publish en es            # Publish specific locales
+airstrings promote preview          # Diff staging → production; prints the dashboard link where a human applies it
 ```
+
+Publishing to a protected environment exits with code 7 and tells you the next step: publish to staging, then ask a human to promote at the printed link.
 
 ### Offline-safe builds
 
@@ -149,8 +164,8 @@ airstrings import status imp_xxxxx  # Check import progress
 The workspace workflow lets you manage strings locally and sync with the API. This is the recommended workflow for AI-assisted string management.
 
 ```bash
-# Initialize workspace
-airstrings init ask_live_xxxxxxxxxxxx
+# Initialize workspace with the staging write key from onboarding
+airstrings init <staging-write-key>
 
 # Add strings locally (no API calls)
 airstrings strings set onboarding.welcome en="Welcome!" it="Benvenuto!" --format text --section onboarding
@@ -244,6 +259,22 @@ Add `--json` to any command for machine-readable output:
 airstrings strings list --json
 airstrings project --json | jq '.name'
 ```
+
+With `--json`, errors are written to stderr as `{"error":{"message":"…","next_step":"…","exit_code":7}}`.
+
+### Exit codes
+
+| code | meaning |
+|------|---------|
+| 0 | ok |
+| 1 | generic error |
+| 2 | usage / bad input |
+| 3 | auth: bad or expired key, read key used for a write, or no key in this workspace for an open environment |
+| 4 | not found |
+| 5 | network (retry) |
+| 6 | rate limited (retry) |
+| 7 | environment protected — publish to staging, a human promotes |
+| 8 | plan limit reached — upgrade |
 
 ## Configuration
 

@@ -58,3 +58,35 @@ func TestListBundles_DecodesFallbackURL(t *testing.T) {
 		t.Errorf("FallbackURL = %q, want %q", got, want)
 	}
 }
+
+func TestDashboardBase(t *testing.T) {
+	cases := map[string]string{
+		"https://api.airstrings.com":         "https://app.airstrings.com",
+		"https://api-staging.airstrings.com": "https://app-staging.airstrings.com",
+		"http://localhost:8080":              "https://app.airstrings.com",
+	}
+	for in, want := range cases {
+		if got := DashboardBase(in); got != want {
+			t.Errorf("DashboardBase(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestAPIErrorExitCodes(t *testing.T) {
+	cases := []struct {
+		status int
+		code   string
+		want   int
+	}{
+		{403, "environment_protected", 7},
+		{403, "quota_exceeded", 8},
+		{403, "forbidden", 3},
+		{401, "unauthorized", 3},
+	}
+	for _, tc := range cases {
+		e := &APIError{StatusCode: tc.status, Body: ErrorResponse{Error: ErrorBody{Code: tc.code, Message: "m"}}}
+		if got := e.ExitCode(); got != tc.want {
+			t.Errorf("%d/%s → %d, want %d", tc.status, tc.code, got, tc.want)
+		}
+	}
+}

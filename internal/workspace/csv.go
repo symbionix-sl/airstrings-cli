@@ -249,3 +249,25 @@ func RemoveRows(path, key, locale string) error {
 
 	return WriteCSV(path, kept)
 }
+
+// Snapshot captures the file at path so a failed follow-up (e.g. --push) can
+// put it back exactly, including removing a file that did not exist before.
+func Snapshot(path string) (restore func() error, err error) {
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return func() error {
+			if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+				return err
+			}
+			return nil
+		}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return nil, err
+	}
+	return func() error { return os.WriteFile(path, data, info.Mode().Perm()) }, nil
+}

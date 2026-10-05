@@ -7,6 +7,7 @@ type PromotionPreview struct {
 	TargetEnvID string           `json:"target_env_id"`
 	Summary     PromotionSummary `json:"summary"`
 	Entries     []PromotionEntry `json:"entries"`
+	ApplyURL    string           `json:"apply_url,omitempty"`
 }
 
 type PromotionSummary struct {

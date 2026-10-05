@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/symbionix-sl/airstrings-cli/internal/client"
+	"github.com/symbionix-sl/airstrings-cli/internal/guide"
 	"github.com/symbionix-sl/airstrings-cli/internal/workspace"
 )
 
@@ -107,8 +108,18 @@ var toolDefs = []ToolDef{
 		},
 	},
 	{
+		Name:        "airstrings_sdk_config",
+		Description: "SDK setup values for one environment: organization, project and environment IDs, Ed25519 public key(s), protection (protected/open) and ready-to-paste initializers for web, react_native, ios and android. Works with any key of the project — a staging key returns production's config, so no production key is needed for SDK setup.",
+		InputSchema: InputSchema{
+			Type: "object",
+			Properties: map[string]Property{
+				"env": {Type: "string", Description: "Environment NAME or ID. Defaults to the default (production) environment."},
+			},
+		},
+	},
+	{
 		Name:        "airstrings_promote_preview",
-		Description: "Read-only diff of what promoting strings from one environment to another would change (added, updated, and extra keys per locale). Applies nothing — a human reviews the diff and applies the promotion in the webapp.",
+		Description: "Read-only diff of what promoting strings from one environment to another would change (added, updated, and extra keys per locale). Applies nothing — a human reviews the diff and applies the promotion at apply_url in the dashboard.",
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]Property{
@@ -188,6 +199,7 @@ var toolHandlers = map[string]toolHandler{
 	"airstrings_pull":            handleToolPull,
 	"airstrings_publish":         handleToolPublish,
 	"airstrings_promote_preview": handleToolPromotePreview,
+	"airstrings_sdk_config":      handleToolSDKConfig,
 	"airstrings_variant_set":     handleToolVariantSet,
 	"airstrings_variant_status":  handleToolVariantStatus,
 	"airstrings_variant_start":   handleToolVariantStart,
@@ -336,6 +348,10 @@ func handleToolStringsSet(raw json.RawMessage) *CallToolResult {
 	}
 
 	path := workspace.CSVPath(wsDir, args.Section)
+	restore, err := workspace.Snapshot(path)
+	if err != nil {
+		return errorResult(fmt.Sprintf("read %s: %s", path, err))
+	}
 	if err := workspace.SetRows(path, args.Key, values, format); err != nil {
 		return errorResult(fmt.Sprintf("set rows: %s", err))
 	}
@@ -346,7 +362,7 @@ func handleToolStringsSet(raw json.RawMessage) *CallToolResult {
 			return errRes
 		}
 		if err := workspace.PushKey(c, args.Key, values, format, args.Section); err != nil {
-			return errorResult(fmt.Sprintf("push %s: %s", args.Key, err))
+			return errorResult(fmt.Sprintf("push %s%s: %s", args.Key, rollback(restore), err))
 		}
 	}
 
@@ -383,6 +399,10 @@ func handleToolStringsRm(raw json.RawMessage) *CallToolResult {
 	}
 
 	path := workspace.CSVPath(wsDir, args.Section)
+	restore, err := workspace.Snapshot(path)
+	if err != nil {
+		return errorResult(fmt.Sprintf("read %s: %s", path, err))
+	}
 	if err := workspace.RemoveRows(path, args.Key, args.Locale); err != nil {
 		return errorResult(fmt.Sprintf("remove rows: %s", err))
 	}
@@ -393,7 +413,7 @@ func handleToolStringsRm(raw json.RawMessage) *CallToolResult {
 			return errRes
 		}
 		if err := workspace.PushKeyRemoval(c, args.Key, args.Locale); err != nil {
-			return errorResult(fmt.Sprintf("push removal %s: %s", args.Key, err))
+			return errorResult(fmt.Sprintf("push removal %s%s: %s", args.Key, rollback(restore), err))
 		}
 	}
 
@@ -618,6 +638,7 @@ func handleToolPromotePreview(raw json.RawMessage) *CallToolResult {
 	if err != nil {
 		return errorResult(fmt.Sprintf("promotion preview: %s", err))
 	}
+	resp.ApplyURL = guide.PromoteURL(c.DashboardURL(""), c.ProjectID(), targetID)
 
 	out, _ := json.Marshal(resp)
 	return textResult(string(out))
@@ -823,4 +844,51 @@ func splitComma(s string) []string {
 	}
 	parts = append(parts, s[start:])
 	return parts
+}
+
+func rollback(restore func() error) string {
+	if err := restore(); err != nil {
+		return fmt.Sprintf(" (could not restore local CSV: %s — it still has the unpushed change)", err)
+	}
+	return " (local CSV restored — nothing changed)"
+}
+
+func handleToolSDKConfig(raw json.RawMessage) *CallToolResult {
+	var args struct {
+		Env string `json:"env"`
+	}
+	json.Unmarshal(raw, &args)
+
+	wsDir, err := workspace.Find()
+	if err != nil {
+		return errorResult(err.Error())
+	}
+	c, errRes := resolvePushClient(wsDir)
+	if errRes != nil {
+		return errRes
+	}
+	cfg, err := c.GetSDKConfig()
+	if err != nil {
+		return errorResult(fmt.Sprintf("get sdk config: %s", err))
+	}
+
+	var names []string
+	for _, e := range cfg.Environments {
+		names = append(names, e.Name)
+		if (args.Env == "" && e.IsDefault) || (args.Env != "" && (strings.EqualFold(e.Name, args.Env) || e.ID == args.Env)) {
+			keys := make([]string, len(e.PublicKeys))
+			for i, k := range e.PublicKeys {
+				keys[i] = k.PublicKey
+			}
+			out, _ := json.Marshal(map[string]any{
+				"org_id":      cfg.OrgID,
+				"project_id":  cfg.ProjectID,
+				"environment": e,
+				"protection":  guide.Protection(e.IsSealed),
+				"snippets":    guide.Snippets(cfg.OrgID, cfg.ProjectID, e.ID, keys),
+			})
+			return textResult(string(out))
+		}
+	}
+	return errorResult(fmt.Sprintf("environment %q does not exist in this project. Available: %s", args.Env, strings.Join(names, ", ")))
 }

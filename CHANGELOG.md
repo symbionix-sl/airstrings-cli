@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.16.0] - Unreleased
+
+### Added
+
+- `airstrings sdk-config [--env <name>]` and MCP tool `airstrings_sdk_config`: organization, project and environment IDs, Ed25519 public key(s), protection, and ready-to-paste Web / React Native / iOS / Android initializers. Works with any key of the project, so a staging key prints production's SDK config.
+- `promote preview` ends with the dashboard link where a human applies the promotion (`apply_url` in JSON and in the MCP tool result).
+- `status` shows the key scope (read/write) and the one next step for the current environment state (`key_scope`, `hint` in JSON).
+- `env` lists every remote environment with `protected`/`open` and whether this workspace holds a key for it (`protection`, `key_in_workspace`, `active` in JSON).
+- Exit code 7 (environment protected) and 8 (plan limit). With `--json`, errors are written to stderr as `{"error":{"message","next_step","exit_code"}}`; API `next_step` guidance is shown in text mode and in MCP tool errors.
+
+### Changed
+
+- `env use <name>` for an environment with no key in the workspace explains the state instead of "not found": protected → no key needed, use `sdk-config` and promotion (exit 7); open → create a key at the dashboard link and `env add` it (exit 3).
+- `status --json` `protection` is now `"protected"`, `"open"` or `"unknown"` (was `"yolo"` for open).
+- Protected-environment and quota API errors no longer exit 3 (auth); see the new codes above.
+
+### Fixed
+
+- `strings set/rm --push`: when the push fails, the local CSV is restored and the error says so.
+- `init --url` is accepted before the key, and `AIRSTRINGS_BASE_URL` is honored.
+
 ## [0.15.0] - 2026-09-17
 
 ### Added
