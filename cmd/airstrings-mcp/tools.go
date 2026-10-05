@@ -118,6 +118,16 @@ var toolDefs = []ToolDef{
 		},
 	},
 	{
+		Name:        "airstrings_status",
+		Description: "Workspace status, same as `airstrings status`: project, active environment, key scope (read/write), protection of every environment (protected/open) and the one next step for this state.",
+		InputSchema: InputSchema{Type: "object", Properties: map[string]Property{}},
+	},
+	{
+		Name:        "airstrings_env_list",
+		Description: "Every environment of the project, same as `airstrings env`: name, ID, default, protection (protected/open), whether this workspace holds a key for it, and which one is active.",
+		InputSchema: InputSchema{Type: "object", Properties: map[string]Property{}},
+	},
+	{
 		Name:        "airstrings_promote_preview",
 		Description: "Read-only diff of what promoting strings from one environment to another would change (added, updated, and extra keys per locale). Applies nothing — a human reviews the diff and applies the promotion at apply_url in the dashboard.",
 		InputSchema: InputSchema{
@@ -200,6 +210,8 @@ var toolHandlers = map[string]toolHandler{
 	"airstrings_publish":         handleToolPublish,
 	"airstrings_promote_preview": handleToolPromotePreview,
 	"airstrings_sdk_config":      handleToolSDKConfig,
+	"airstrings_status":          handleToolStatus,
+	"airstrings_env_list":        handleToolEnvList,
 	"airstrings_variant_set":     handleToolVariantSet,
 	"airstrings_variant_status":  handleToolVariantStatus,
 	"airstrings_variant_start":   handleToolVariantStart,
@@ -883,7 +895,7 @@ func handleToolSDKConfig(raw json.RawMessage) *CallToolResult {
 			out, _ := json.Marshal(map[string]any{
 				"org_id":      cfg.OrgID,
 				"project_id":  cfg.ProjectID,
-				"environment": e,
+				"environment": guide.SDKEnvironment(e),
 				"protection":  guide.Protection(e.IsSealed),
 				"snippets":    guide.Snippets(cfg.OrgID, cfg.ProjectID, e.ID, keys),
 			})
@@ -891,4 +903,56 @@ func handleToolSDKConfig(raw json.RawMessage) *CallToolResult {
 		}
 	}
 	return errorResult(fmt.Sprintf("environment %q does not exist in this project. Available: %s", args.Env, strings.Join(names, ", ")))
+}
+
+func loadWorkspace() (*workspace.WorkspaceConfig, *client.Client, *CallToolResult) {
+	wsDir, err := workspace.Find()
+	if err != nil {
+		return nil, nil, errorResult(err.Error())
+	}
+	wsCfg, err := workspace.LoadConfig(wsDir)
+	if err != nil {
+		return nil, nil, errorResult(err.Error())
+	}
+	c, err := workspace.ResolveClient(wsCfg)
+	if err != nil {
+		return nil, nil, errorResult(err.Error())
+	}
+	return wsCfg, c, nil
+}
+
+func handleToolStatus(json.RawMessage) *CallToolResult {
+	wsCfg, c, errRes := loadWorkspace()
+	if errRes != nil {
+		return errRes
+	}
+	cred, err := wsCfg.ActiveCredential()
+	if err != nil {
+		return errorResult(err.Error())
+	}
+	d := guide.Inspect(c, cred.APIKey, func(id string) bool { return wsCfg.FindByEnvID(id) != nil })
+	out, _ := json.Marshal(map[string]any{
+		"project_id":        wsCfg.ProjectID,
+		"project_name":      wsCfg.ProjectName,
+		"env_id":            cred.EnvID,
+		"env_name":          cred.EnvName,
+		"protection":        d.Protection,
+		"protection_by_env": d.ProtectionByEnv,
+		"key_scope":         d.KeyScope,
+		"hint":              d.Hint,
+	})
+	return textResult(string(out))
+}
+
+func handleToolEnvList(json.RawMessage) *CallToolResult {
+	wsCfg, c, errRes := loadWorkspace()
+	if errRes != nil {
+		return errRes
+	}
+	envs, err := c.ListEnvironments()
+	if err != nil {
+		return errorResult(fmt.Sprintf("list environments: %s", err))
+	}
+	out, _ := json.Marshal(guide.EnvRows(envs, func(id string) bool { return wsCfg.FindByEnvID(id) != nil }, wsCfg.ActiveEnv))
+	return textResult(string(out))
 }

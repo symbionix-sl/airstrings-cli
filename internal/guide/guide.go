@@ -65,6 +65,15 @@ func OpenNoKey(envName, apiKeysURL string) Hint {
 	}
 }
 
+// NeedStagingKey is state 2 for a workspace whose only key is for the protected env.
+func NeedStagingKey(defName, stagingName, apiKeysURL, promoteURL string) Hint {
+	return Hint{
+		Message: fmt.Sprintf("%s is protected: changes reach it only by promotion.", Title(defName)),
+		NextStep: fmt.Sprintf("Create a %s write key at %s and run `airstrings env add <key>`, publish to %s, then ask a human to promote: %s",
+			client.StripControl(stagingName), apiKeysURL, client.StripControl(stagingName), promoteURL),
+	}
+}
+
 // Status picks the one-line hint for the active environment (states 1, 2, 5, 6).
 func Status(activeName string, activeIsDefault bool, defName string, defSealed, defKeyInWorkspace bool, promoteURL, defAPIKeysURL string) Hint {
 	switch {
@@ -108,6 +117,7 @@ const airstrings = new AirStrings({
   projectId: '%s',
   environmentId: '%s',
   publicKeys: [%s],
+  locale: 'en',
 })`, pkg, orgID, projectID, envID, quoted("'"))
 	}
 	return map[string]string{

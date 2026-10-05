@@ -109,6 +109,8 @@ func TestMCP_ToolsList(t *testing.T) {
 		"airstrings_publish":         false,
 		"airstrings_promote_preview": false,
 		"airstrings_sdk_config":      false,
+		"airstrings_status":          false,
+		"airstrings_env_list":        false,
 		"airstrings_variant_set":     false,
 		"airstrings_variant_status":  false,
 		"airstrings_variant_start":   false,
@@ -941,6 +943,52 @@ func TestMCP_ToolCall_SDKConfigFromStagingKey(t *testing.T) {
 	for _, w := range []string{`"protection":"protected"`, `"id":"env_prod"`, `publicKeys: ['UFJPRA==']`, `"org_id":"org_test"`} {
 		if !strings.Contains(text, w) {
 			t.Errorf("result missing %s:\n%s", w, text)
+		}
+	}
+}
+
+func TestMCP_ToolCall_StatusAndEnvList(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/projects/proj_test/environments":
+			w.Write([]byte(`{"data":[{"id":"env_prod","name":"production","is_default":true,"is_sealed":true},{"id":"env_staging","name":"staging","is_default":false,"is_sealed":false}]}`))
+		case "/v1/projects/proj_test/environments/env_staging/api-keys":
+			w.Write([]byte(`{"data":[{"id":"ak_1","permission":"write","prefix":"stagingk"}]}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	dir := t.TempDir()
+	workspace.Init(dir, workspace.WorkspaceConfig{
+		ProjectID: "proj_test", ActiveEnv: "env_staging",
+		Credentials: []workspace.Credential{{APIKey: "stagingkey000", BaseURL: srv.URL, EnvID: "env_staging", EnvName: "staging"}},
+	})
+	origDir, _ := os.Getwd()
+	os.Chdir(dir)
+	defer os.Chdir(origDir)
+
+	call := func(name string) string {
+		resp := mcpExchange(t, &MCPServer{}, "tools/call", 10, map[string]any{"name": name, "arguments": map[string]any{}})
+		resultJSON, _ := json.Marshal(resp.Result)
+		var res CallToolResult
+		json.Unmarshal(resultJSON, &res)
+		if res.IsError {
+			t.Fatalf("%s error: %s", name, res.Content[0].Text)
+		}
+		return res.Content[0].Text
+	}
+	status := call("airstrings_status")
+	for _, w := range []string{`"key_scope":"write"`, `"protection_by_env":{"production":"protected","staging":"open"}`, `Connected to staging. Production is protected.`, `/projects/proj_test/env/env_prod/promote`} {
+		if !strings.Contains(status, w) {
+			t.Errorf("status missing %s:\n%s", w, status)
+		}
+	}
+	envs := call("airstrings_env_list")
+	for _, w := range []string{`"name":"production","is_default":true,"is_sealed":true`, `"protection":"protected","key_in_workspace":false,"active":false`, `"protection":"open","key_in_workspace":true,"active":true`} {
+		if !strings.Contains(envs, w) {
+			t.Errorf("env_list missing %s:\n%s", w, envs)
 		}
 	}
 }
