@@ -77,10 +77,13 @@ func TestSDKConfigProductionFromStagingKey(t *testing.T) {
 	if out.OrgID != "org_test" || out.Environment.ID != "env_prod" || out.Protection != "protected" {
 		t.Errorf("unexpected config: %+v", out)
 	}
-	for _, p := range []string{"web", "react_native", "ios", "android"} {
+	for _, p := range []string{"web", "react_native", "ios", "android", "go"} {
 		if !strings.Contains(out.Snippets[p], "UFJPRA==") || !strings.Contains(out.Snippets[p], "env_prod") {
 			t.Errorf("%s snippet missing prod key/env: %s", p, out.Snippets[p])
 		}
+	}
+	if !strings.Contains(out.Snippets["go"], `OrganizationID: "org_test"`) || !strings.Contains(out.Snippets["go"], `PublicKeys:     []string{"UFJPRA=="}`) {
+		t.Errorf("go snippet field names wrong:\n%s", out.Snippets["go"])
 	}
 	if !strings.Contains(out.Snippets["ios"], `organizationId: "org_test"`) || !strings.Contains(out.Snippets["android"], `publicKeys = listOf("UFJPRA==")`) {
 		t.Errorf("snippet field names wrong:\n%s\n%s", out.Snippets["ios"], out.Snippets["android"])

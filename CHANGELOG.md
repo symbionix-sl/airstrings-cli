@@ -5,7 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.16.1] - Unreleased
+## [0.17.0] - 2026-10-05
+
+### Added
+
+- `sdk-config` and MCP tool `airstrings_sdk_config` print a Go initializer for the new Go SDK (`github.com/symbionix-sl/airstrings-sdk-go`).
+- `bundles pull` first-pull hint covers Go seeding (`<cwd>/airstrings/bundles/` or an embedded folder via `Config.Seed`).
+
+## [0.16.1]
 
 ### Added
 

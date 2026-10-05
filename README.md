@@ -1,6 +1,6 @@
 # airstrings
 
-CLI and MCP server for [AirStrings](https://airstrings.com): over-the-air string updates for iOS, Android, web and React Native apps.
+CLI and MCP server for [AirStrings](https://airstrings.com): over-the-air string updates for iOS, Android, web and React Native apps, and Go backends.
 
 Manage strings and locales from the terminal or let an AI agent do it over MCP. `airstrings publish` has AirStrings sign the bundle (Ed25519) and push it to the CDN; the SDKs verify the signature before showing anything.
 
@@ -74,7 +74,7 @@ airstrings sdk-config --env staging       # another environment
 airstrings sdk-config --env production --json
 ```
 
-Prints the organization, project and environment IDs, the environment's Ed25519 public key(s), and a ready-to-paste initializer for the Web, React Native, iOS and Android SDKs. Public keys are not secret, so any key of the project works — a staging key prints production's config.
+Prints the organization, project and environment IDs, the environment's Ed25519 public key(s), and a ready-to-paste initializer for the Web, React Native, iOS, Android and Go SDKs. Public keys are not secret, so any key of the project works — a staging key prints production's config.
 
 ## Usage
 

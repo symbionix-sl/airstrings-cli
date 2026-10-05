@@ -139,6 +139,15 @@ let airStrings = AirStrings(configuration: .init(
 )
 
 val airStrings = AirStrings.create(context, config)`, orgID, projectID, envID, quoted(`"`)),
+		"go": fmt.Sprintf(`import airstrings "github.com/symbionix-sl/airstrings-sdk-go"
+
+client, err := airstrings.New(airstrings.Config{
+	OrganizationID: "%s",
+	ProjectID:      "%s",
+	EnvironmentID:  "%s",
+	PublicKeys:     []string{%s},
+	Locales:        []string{"en"},
+})`, orgID, projectID, envID, quoted(`"`)),
 	}
 }
 
@@ -147,4 +156,5 @@ var SnippetOrder = []struct{ Key, Label string }{
 	{"react_native", "React Native"},
 	{"ios", "iOS (Swift)"},
 	{"android", "Android (Kotlin)"},
+	{"go", "Go"},
 }

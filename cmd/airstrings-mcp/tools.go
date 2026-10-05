@@ -109,7 +109,7 @@ var toolDefs = []ToolDef{
 	},
 	{
 		Name:        "airstrings_sdk_config",
-		Description: "SDK setup values for one environment: organization, project and environment IDs, Ed25519 public key(s), protection (protected/open) and ready-to-paste initializers for web, react_native, ios and android. Works with any key of the project — a staging key returns production's config, so no production key is needed for SDK setup.",
+		Description: "SDK setup values for one environment: organization, project and environment IDs, Ed25519 public key(s), protection (protected/open) and ready-to-paste initializers for web, react_native, ios, android and go. Works with any key of the project — a staging key returns production's config, so no production key is needed for SDK setup.",
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]Property{

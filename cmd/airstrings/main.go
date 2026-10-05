@@ -257,7 +257,7 @@ Show active project, environment, key scope (read/write), protection
 
 Print the organization, project and environment IDs plus the environment's
 Ed25519 public key(s), and a ready-to-paste initializer for the Web, React
-Native, iOS and Android SDKs. Defaults to the production (default) environment.
+Native, iOS, Android and Go SDKs. Defaults to the production (default) environment.
 
 Works with any key of the project — a staging key can print production's SDK
 config, so a workspace never needs a production key just to set up an SDK.
@@ -1884,12 +1884,13 @@ const firstPullHint = `First pull — commit this folder so your apps ship with 
   Android:      copy or map the folder into src/main/assets/
   Web:          Node seeds from <cwd>/airstrings/bundles/ automatically; browsers import bundle JSON at build time
   React Native: require() each bundle JSON, or ship via the iOS + Android steps above (RN uses both native bundles)
+  Go:           seeds from <cwd>/airstrings/bundles/ automatically, or embed the folder and pass it as Config.Seed
 Then run: airstrings doctor   (verifies your project is wired up)
 See: https://docs.airstrings.com/docs/specs/bundled-fallback
 `
 
 const refreshPullHint = `Bundles refreshed — rebuild your app to ship the updated strings.
-New locale files must be embedded like the first pull (iOS folder ref / Android assets / Web import / RN require).
+New locale files must be embedded like the first pull (iOS folder ref / Android assets / Web import / RN require / Go embed).
 Verify wiring: airstrings doctor
 See: https://docs.airstrings.com/docs/specs/bundled-fallback
 `
