@@ -4,8 +4,22 @@ package guide
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
+
+	"github.com/symbionix-sl/airstrings-cli/internal/client"
 )
+
+var shellSafe = regexp.MustCompile(`^[A-Za-z0-9_.-]+$`)
+
+// ShellArg makes a server-provided name safe to paste into a shell command.
+func ShellArg(s string) string {
+	s = client.StripControl(s)
+	if shellSafe.MatchString(s) {
+		return s
+	}
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
 
 type Hint struct {
 	Message  string `json:"message"`
@@ -20,6 +34,7 @@ func Protection(sealed bool) string {
 }
 
 func Title(name string) string {
+	name = client.StripControl(name)
 	if name == "" {
 		return name
 	}
@@ -37,16 +52,16 @@ func APIKeysURL(dashboard, projectID, envID string) string {
 // ProtectedNoKey is state 4: switching to a protected env the workspace has no key for.
 func ProtectedNoKey(envName, promoteURL string) Hint {
 	return Hint{
-		Message:  fmt.Sprintf("%s is protected, so this workspace doesn't need a %s key.", Title(envName), envName),
-		NextStep: fmt.Sprintf("SDK setup: `airstrings sdk-config --env %s`. To ship: publish to staging, then ask a human to promote: %s", envName, promoteURL),
+		Message:  fmt.Sprintf("%s is protected, so this workspace doesn't need a %s key.", Title(envName), client.StripControl(envName)),
+		NextStep: fmt.Sprintf("SDK setup: `airstrings sdk-config --env %s`. To ship: publish to staging, then ask a human to promote: %s", ShellArg(envName), promoteURL),
 	}
 }
 
 // OpenNoKey is state 5: the env accepts direct publishing but the workspace has no key for it.
 func OpenNoKey(envName, apiKeysURL string) Hint {
 	return Hint{
-		Message:  fmt.Sprintf("%s accepts direct publishing, but this workspace has no %s key.", Title(envName), envName),
-		NextStep: fmt.Sprintf("Create one at %s (%s, write), then `airstrings env add <key>`", apiKeysURL, envName),
+		Message:  fmt.Sprintf("%s accepts direct publishing, but this workspace has no %s key.", Title(envName), client.StripControl(envName)),
+		NextStep: fmt.Sprintf("Create one at %s (%s, write), then `airstrings env add <key>`", apiKeysURL, client.StripControl(envName)),
 	}
 }
 
@@ -59,18 +74,18 @@ func Status(activeName string, activeIsDefault bool, defName string, defSealed, 
 			NextStep: "Publish to staging, then ask a human to promote: " + promoteURL,
 		}
 	case activeIsDefault:
-		return Hint{Message: fmt.Sprintf("Publishing directly to %s.", defName)}
+		return Hint{Message: fmt.Sprintf("Publishing directly to %s.", client.StripControl(defName))}
 	case defSealed:
 		return Hint{
-			Message:  fmt.Sprintf("Connected to %s. %s is protected.", activeName, Title(defName)),
-			NextStep: fmt.Sprintf("Publish to %s, then ask a human to promote: %s", activeName, promoteURL),
+			Message:  fmt.Sprintf("Connected to %s. %s is protected.", client.StripControl(activeName), Title(defName)),
+			NextStep: fmt.Sprintf("Publish to %s, then ask a human to promote: %s", client.StripControl(activeName), promoteURL),
 		}
 	case !defKeyInWorkspace:
 		return OpenNoKey(defName, defAPIKeysURL)
 	default:
 		return Hint{
-			Message:  fmt.Sprintf("Connected to %s. %s accepts direct publishing.", activeName, Title(defName)),
-			NextStep: fmt.Sprintf("`airstrings env use %s` to publish there directly", defName),
+			Message:  fmt.Sprintf("Connected to %s. %s accepts direct publishing.", client.StripControl(activeName), Title(defName)),
+			NextStep: fmt.Sprintf("`airstrings env use %s` to publish there directly", ShellArg(defName)),
 		}
 	}
 }

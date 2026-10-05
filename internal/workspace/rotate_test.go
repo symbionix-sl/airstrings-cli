@@ -86,6 +86,13 @@ func newAPIKeyAPI(ownPermission string) *apiKeyAPI {
 			return
 		}
 		id := filepath.Base(r.URL.Path)
+		if self := map[string]string{rotateOldKey: "ak_old", rotateNewKey: "ak_new"}[r.Header.Get("X-API-Key")]; self != id {
+			w.WriteHeader(http.StatusForbidden)
+			json.NewEncoder(w).Encode(client.ErrorResponse{
+				Error: client.ErrorBody{Code: "forbidden", Message: "Revoking another API key needs a signed-in user"},
+			})
+			return
+		}
 		if api.revokeFail[id] {
 			w.WriteHeader(http.StatusInternalServerError)
 			json.NewEncoder(w).Encode(client.ErrorResponse{
@@ -152,8 +159,8 @@ func TestRotateKey_HappyPath(t *testing.T) {
 	if len(api.revoked) != 1 || api.revoked[0].id != "ak_old" {
 		t.Fatalf("unexpected revocations: %+v", api.revoked)
 	}
-	if api.revoked[0].usedKey != rotateNewKey {
-		t.Errorf("expected old key revoked with new key, used %q", api.revoked[0].usedKey)
+	if api.revoked[0].usedKey != rotateOldKey {
+		t.Errorf("expected old key to revoke itself, used %q", api.revoked[0].usedKey)
 	}
 	if len(api.verifyCalls) != 1 || api.verifyCalls[0] != rotateNewKey {
 		t.Errorf("expected one verify call with new key, got %+v", api.verifyCalls)
@@ -234,8 +241,8 @@ func TestRotateKey_VerifyFailureRollsBack(t *testing.T) {
 	if len(api.revoked) != 1 || api.revoked[0].id != "ak_new" {
 		t.Fatalf("expected new key revoked, got %+v", api.revoked)
 	}
-	if api.revoked[0].usedKey != rotateOldKey {
-		t.Errorf("expected new key revoked with old key, used %q", api.revoked[0].usedKey)
+	if api.revoked[0].usedKey != rotateNewKey {
+		t.Errorf("expected new key to revoke itself, used %q", api.revoked[0].usedKey)
 	}
 }
 

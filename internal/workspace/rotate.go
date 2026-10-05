@@ -45,21 +45,21 @@ func RotateKey(wsDir string, wsCfg *WorkspaceConfig, cred *Credential) (*RotateR
 		return nil, fmt.Errorf("create replacement key: %w", err)
 	}
 
+	newClient := client.New(newKey.Key, cred.BaseURL, wsCfg.ProjectID, cred.EnvID)
 	oldAPIKey := cred.APIKey
 	cred.APIKey = newKey.Key
 	if err := SaveConfig(wsDir, wsCfg); err != nil {
 		cred.APIKey = oldAPIKey
-		if revokeErr := oldClient.RevokeAPIKey(newKey.ID); revokeErr != nil {
+		if revokeErr := newClient.RevokeAPIKey(newKey.ID); revokeErr != nil {
 			return nil, fmt.Errorf("save config: %v — revoking the new key %s also failed (%v), revoke it manually via the dashboard", err, newKey.ID, revokeErr)
 		}
 		return nil, fmt.Errorf("save config: %w (new key revoked, old key still active)", err)
 	}
 
-	newClient := client.New(newKey.Key, cred.BaseURL, wsCfg.ProjectID, cred.EnvID)
 	if _, err := newClient.GetProject(); err != nil {
 		cred.APIKey = oldAPIKey
 		saveErr := SaveConfig(wsDir, wsCfg)
-		revokeErr := oldClient.RevokeAPIKey(newKey.ID)
+		revokeErr := newClient.RevokeAPIKey(newKey.ID)
 		msg := fmt.Sprintf("verify new key: %v", err)
 		if saveErr != nil {
 			msg += fmt.Sprintf(" — restoring the old key in config failed (%v)", saveErr)
@@ -75,7 +75,7 @@ func RotateKey(wsDir string, wsCfg *WorkspaceConfig, cred *Credential) (*RotateR
 		NewKeyID:     newKey.ID,
 		NewKeyPrefix: newKey.Prefix,
 	}
-	if err := newClient.RevokeAPIKey(own.ID); err != nil {
+	if err := oldClient.RevokeAPIKey(own.ID); err != nil {
 		result.RevokeErr = err
 		return result, nil
 	}

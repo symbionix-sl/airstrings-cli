@@ -824,6 +824,11 @@ func parseKeyAndURL(args []string) (string, string) {
 	if apiKey == "" {
 		output.Fail(output.ExitUsage, "usage: provide an API key")
 	}
+	if baseURL != "" {
+		if err := client.ValidateBaseURL(baseURL); err != nil {
+			output.Fail(output.ExitUsage, "%s", err)
+		}
+	}
 	return apiKey, baseURL
 }
 
