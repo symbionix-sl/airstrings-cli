@@ -108,6 +108,7 @@ func TestMCP_ToolsList(t *testing.T) {
 		"airstrings_pull":            false,
 		"airstrings_publish":         false,
 		"airstrings_promote_preview": false,
+		"airstrings_sdk_config":      false,
 		"airstrings_variant_set":     false,
 		"airstrings_variant_status":  false,
 		"airstrings_variant_start":   false,
@@ -905,5 +906,41 @@ func TestMCP_ToolCall_Variant_Forbidden(t *testing.T) {
 	}
 	if !strings.Contains(result.Content[0].Text, "403") {
 		t.Errorf("expected 403 in error text, got %q", result.Content[0].Text)
+	}
+}
+
+func TestMCP_ToolCall_SDKConfigFromStagingKey(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/projects/proj_test/sdk-config" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.Write([]byte(`{"org_id":"org_test","project_id":"proj_test","environments":[` +
+			`{"id":"env_prod","name":"production","is_default":true,"is_sealed":true,"public_keys":[{"key_id":"UFJPRA==","public_key":"UFJPRA=="}]},` +
+			`{"id":"env_staging","name":"staging","is_default":false,"is_sealed":false,"public_keys":[]}]}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	dir := t.TempDir()
+	workspace.Init(dir, workspace.WorkspaceConfig{
+		ProjectID: "proj_test", ActiveEnv: "env_staging",
+		Credentials: []workspace.Credential{{APIKey: "k", BaseURL: srv.URL, EnvID: "env_staging", EnvName: "staging"}},
+	})
+	origDir, _ := os.Getwd()
+	os.Chdir(dir)
+	defer os.Chdir(origDir)
+
+	resp := mcpExchange(t, &MCPServer{}, "tools/call", 9, map[string]any{"name": "airstrings_sdk_config", "arguments": map[string]any{}})
+	resultJSON, _ := json.Marshal(resp.Result)
+	var res CallToolResult
+	json.Unmarshal(resultJSON, &res)
+	if res.IsError {
+		t.Fatalf("tool error: %s", res.Content[0].Text)
+	}
+	text := res.Content[0].Text
+	for _, w := range []string{`"protection":"protected"`, `"id":"env_prod"`, `publicKeys: ['UFJPRA==']`, `"org_id":"org_test"`} {
+		if !strings.Contains(text, w) {
+			t.Errorf("result missing %s:\n%s", w, text)
+		}
 	}
 }

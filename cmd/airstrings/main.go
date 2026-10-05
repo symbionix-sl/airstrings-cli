@@ -15,6 +15,7 @@ import (
 	"github.com/symbionix-sl/airstrings-cli/internal/bundlepull"
 	"github.com/symbionix-sl/airstrings-cli/internal/client"
 	"github.com/symbionix-sl/airstrings-cli/internal/doctor"
+	"github.com/symbionix-sl/airstrings-cli/internal/guide"
 	"github.com/symbionix-sl/airstrings-cli/internal/output"
 	"github.com/symbionix-sl/airstrings-cli/internal/workspace"
 )
@@ -100,6 +101,8 @@ func main() {
 		handlePull(args)
 	case "promote":
 		handlePromote(args)
+	case "sdk-config":
+		handleSDKConfig(args)
 	case "variants":
 		handleVariants(args)
 	case "mcp":
@@ -129,12 +132,16 @@ Setup:
 
 Navigation:
   project                               Show current project info
-  env                                   List environments (✓ = active)
+  env                                   List every environment: protected/open,
+                                        key in workspace or not (✓ = active)
   env use <name>                        Switch active environment
   env add <api-key> [--url <base-url>]  Add environment credentials
   env rm <name>                         Remove environment credentials
   -e -u <env-name>                      Switch environment (shorthand)
   locales                               List locales with string counts
+  sdk-config [--env <name>]             IDs + public keys + SDK snippets for an
+                                        environment (default: production). Works
+                                        with any key of the project
 
 API keys:
   apikey rotate [--env <name>]          Rotate the workspace API key
@@ -183,7 +190,8 @@ Bundles:
 Promote:
   promote preview [--from <env>] [--to <env>]
                           Preview the pending string diff between two environments
-                          (defaults: from = active env, to = default env). Read-only.
+                          (defaults: from = active env, to = default env). Read-only;
+                          a human applies it at the dashboard link printed last.
 
 Variants (A/B experiments on a string):
   variants create <key>                            Create an experiment (control 100%)
@@ -224,7 +232,9 @@ Environment variables (headless / CI — no 'init' needed):
   NO_COLOR                Disable colored output
 
 Exit codes:
-  0 ok   1 error   2 usage   3 auth   4 not-found   5 network   6 rate-limited
+  0 ok   1 error   2 usage   3 auth / missing key   4 not-found   5 network
+  6 rate-limited   7 environment protected   8 plan limit
+  With --json, errors are {"error":{"message","next_step","exit_code"}} on stderr.
 
 `)
 }
@@ -240,7 +250,20 @@ Flags:
 `,
 	"status": `Usage: airstrings status
 
-Show active project, environment, key, and protection mode.
+Show active project, environment, key scope (read/write), protection
+(protected/open) and the one next step for this state.
+`,
+	"sdk-config": `Usage: airstrings sdk-config [--env <name>]
+
+Print the organization, project and environment IDs plus the environment's
+Ed25519 public key(s), and a ready-to-paste initializer for the Web, React
+Native, iOS and Android SDKs. Defaults to the production (default) environment.
+
+Works with any key of the project — a staging key can print production's SDK
+config, so a workspace never needs a production key just to set up an SDK.
+
+Flags:
+  --env <name>            Environment name or ID (default: production)
 `,
 	"project": `Usage: airstrings project
 
@@ -248,7 +271,8 @@ Show current project info.
 `,
 	"env": `Usage: airstrings env [use|add|rm|create] [options]
 
-  env                                   List environments (✓ = active)
+  env                                   List every environment: protected/open,
+                                        key in workspace or not (✓ = active)
   env use <name>                        Switch active environment
   env add <api-key> [--url <base-url>]  Add environment credentials
   env rm <name>                         Remove environment credentials
@@ -345,6 +369,7 @@ List locales with string counts.
 	"promote": `Usage: airstrings promote preview [--from <env-name>] [--to <env-name>]
 
 Preview the pending string diff between two environments. Read-only — no writes.
+Ends with the dashboard link where a human applies the promotion.
 
   --from <env-name>   Source environment (default: active env)
   --to <env-name>     Target environment (default: default env)
@@ -483,11 +508,21 @@ func failAPI(verb string, err error) {
 	var netErr *client.NetworkError
 	switch {
 	case errors.As(err, &apiErr):
-		code = apiErr.ExitCode()
+		next := apiErr.Body.Error.NextStep
+		msg := strings.TrimSuffix(apiErr.Error(), "\nNext step: "+next)
+		output.FailNext(apiErr.ExitCode(), verb+": "+msg, next)
 	case errors.As(err, &netErr):
 		code = output.ExitNetwork
 	}
 	output.Fail(code, "%s: %s", verb, err)
+}
+
+// rollback restores a CSV after a failed --push and describes the outcome.
+func rollback(restore func() error) string {
+	if err := restore(); err != nil {
+		return fmt.Sprintf(" (could not restore local CSV: %s — it still has the unpushed change)", err)
+	}
+	return " (local CSV restored — nothing changed)"
 }
 
 // handleShorthandFlags processes -e -u <name> flags.
@@ -546,12 +581,33 @@ func switchEnv(wsCfg *workspace.WorkspaceConfig, name string) {
 		}
 	}
 
-	// List available envs
 	var names []string
 	for _, c := range wsCfg.Credentials {
 		names = append(names, c.EnvName)
 	}
-	output.Errorf("environment %q not found. Available: %s", name, strings.Join(names, ", "))
+	if len(wsCfg.Credentials) == 0 {
+		output.Fail(output.ExitNotFound, "environment %q not found. Available: %s", name, strings.Join(names, ", "))
+	}
+	cred := wsCfg.Credentials[0]
+	c := client.New(cred.APIKey, cred.BaseURL, wsCfg.ProjectID, cred.EnvID)
+	envs, err := c.ListEnvironments()
+	if err != nil {
+		failAPI("list environments", err)
+	}
+	names = names[:0]
+	for _, e := range envs {
+		names = append(names, e.Name)
+		if !strings.EqualFold(e.Name, name) && e.ID != name {
+			continue
+		}
+		if e.IsSealed {
+			h := guide.ProtectedNoKey(e.Name, guide.PromoteURL(c.DashboardURL(""), wsCfg.ProjectID, e.ID))
+			output.FailNext(output.ExitProtected, h.Message, h.NextStep)
+		}
+		h := guide.OpenNoKey(e.Name, guide.APIKeysURL(c.DashboardURL(""), wsCfg.ProjectID, e.ID))
+		output.FailNext(output.ExitAuth, h.Message, h.NextStep)
+	}
+	output.Fail(output.ExitNotFound, "environment %q does not exist in this project. Available: %s", name, strings.Join(names, ", "))
 }
 
 // statusClient builds an API client the same way mustClient does (env-var auth
@@ -579,38 +635,71 @@ func statusClient() *client.Client {
 	return c
 }
 
-// statusProtection reports the default environment's protection mode derived
-// from is_sealed: "protected" (sealed), "yolo" (unsealed), or "unknown" on any
-// auth, network, or API failure. Best-effort — it never fails.
-func statusProtection() string {
+type statusDetails struct {
+	Protection string
+	KeyScope   string
+	Hint       *guide.Hint
+}
+
+// statusInfo derives protection ("protected"/"open"/"unknown"), the key's scope
+// ("read"/"write"/"unknown") and the state hint. Best-effort: it never fails.
+func statusInfo(wsCfg *workspace.WorkspaceConfig, apiKey string) statusDetails {
+	d := statusDetails{Protection: "unknown", KeyScope: "unknown"}
 	c := statusClient()
 	if c == nil {
-		return "unknown"
+		return d
+	}
+	if keys, err := c.ListAPIKeys(); err == nil && len(apiKey) >= 8 {
+		for _, k := range keys.Data {
+			if k.Prefix == apiKey[:8] {
+				d.KeyScope = k.Permission
+			}
+		}
 	}
 	envs, err := c.ListEnvironments()
 	if err != nil {
-		return "unknown"
+		return d
 	}
-	for _, e := range envs {
-		if e.IsDefault {
-			if e.IsSealed {
-				return "protected"
-			}
-			return "yolo"
+	var active, def *client.Environment
+	for i := range envs {
+		if envs[i].ID == c.EnvID() {
+			active = &envs[i]
+		}
+		if envs[i].IsDefault {
+			def = &envs[i]
 		}
 	}
-	return "unknown"
+	if def == nil || active == nil {
+		return d
+	}
+	d.Protection = guide.Protection(def.IsSealed)
+	defKey := def.ID == active.ID || (wsCfg != nil && wsCfg.FindByEnvID(def.ID) != nil)
+	dash := c.DashboardURL("")
+	h := guide.Status(active.Name, active.IsDefault, def.Name, def.IsSealed, defKey,
+		guide.PromoteURL(dash, c.ProjectID(), def.ID), guide.APIKeysURL(dash, c.ProjectID(), def.ID))
+	d.Hint = &h
+	return d
 }
 
 // protectionLine renders the human-readable protection descriptor.
 func protectionLine(p string) string {
 	switch p {
 	case "protected":
-		return "protected (production sealed — changes reach it via promote)"
-	case "yolo":
-		return "yolo (direct publish to production enabled)"
+		return "protected (production changes arrive only by promotion)"
+	case "open":
+		return "open (production accepts direct publishing)"
 	default:
 		return "unknown (API unreachable)"
+	}
+}
+
+func printHint(h *guide.Hint) {
+	if h == nil {
+		return
+	}
+	fmt.Printf("\n%s\n", h.Message)
+	if h.NextStep != "" {
+		fmt.Printf("Next step: %s\n", h.NextStep)
 	}
 }
 
@@ -625,7 +714,7 @@ func printStatus(wsDir string, wsCfg *workspace.WorkspaceConfig) {
 		url = "https://api.airstrings.com"
 	}
 
-	protection := statusProtection()
+	info := statusInfo(wsCfg, cred.APIKey)
 
 	if output.JSONMode {
 		envs := make([]map[string]any, 0, len(wsCfg.Credentials))
@@ -645,7 +734,9 @@ func printStatus(wsDir string, wsCfg *workspace.WorkspaceConfig) {
 			"env_id":        cred.EnvID,
 			"env_name":      cred.EnvName,
 			"base_url":      url,
-			"protection":    protection,
+			"protection":    info.Protection,
+			"key_scope":     info.KeyScope,
+			"hint":          info.Hint,
 			"environments":  envs,
 		})
 		return
@@ -654,8 +745,9 @@ func printStatus(wsDir string, wsCfg *workspace.WorkspaceConfig) {
 	fmt.Printf("Project:  %s (%s)\n", wsCfg.ProjectName, wsCfg.ProjectID)
 	fmt.Printf("Env:      %s (%s)\n", cred.EnvName, cred.EnvID)
 	fmt.Printf("API URL:  %s\n", url)
-	fmt.Printf("Key:      %s...%s\n", cred.APIKey[:8], cred.APIKey[len(cred.APIKey)-4:])
-	fmt.Printf("Protection: %s\n", protectionLine(protection))
+	fmt.Printf("Key:      %s...%s (%s)\n", cred.APIKey[:8], cred.APIKey[len(cred.APIKey)-4:], info.KeyScope)
+	fmt.Printf("Protection: %s\n", protectionLine(info.Protection))
+	printHint(info.Hint)
 }
 
 // printEnvStatus reports the credentials sourced from AIRSTRINGS_* env vars.
@@ -672,7 +764,7 @@ func printEnvStatus(env workspace.EnvAuth) {
 		masked = masked[:8] + "..." + masked[len(masked)-4:]
 	}
 
-	protection := statusProtection()
+	info := statusInfo(nil, env.APIKey)
 
 	if output.JSONMode {
 		output.JSON(map[string]any{
@@ -680,7 +772,9 @@ func printEnvStatus(env workspace.EnvAuth) {
 			"project_id": env.ProjectID,
 			"env_id":     env.EnvID,
 			"base_url":   base,
-			"protection": protection,
+			"protection": info.Protection,
+			"key_scope":  info.KeyScope,
+			"hint":       info.Hint,
 		})
 		return
 	}
@@ -697,8 +791,9 @@ func printEnvStatus(env workspace.EnvAuth) {
 	fmt.Printf("Project:  %s\n", projectID)
 	fmt.Printf("Env:      %s\n", envID)
 	fmt.Printf("API URL:  %s\n", base)
-	fmt.Printf("Key:      %s\n", masked)
-	fmt.Printf("Protection: %s\n", protectionLine(protection))
+	fmt.Printf("Key:      %s (%s)\n", masked, info.KeyScope)
+	fmt.Printf("Protection: %s\n", protectionLine(info.Protection))
+	printHint(info.Hint)
 }
 
 // --- Auth commands ---
@@ -991,27 +1086,38 @@ func handleEnv(args []string) {
 
 	_, wsCfg := mustWorkspace()
 
+	type envRow struct {
+		client.Environment
+		Protection     string `json:"protection"`
+		KeyInWorkspace bool   `json:"key_in_workspace"`
+		Active         bool   `json:"active"`
+	}
+	list := make([]envRow, len(envs))
+	for i, e := range envs {
+		list[i] = envRow{e, guide.Protection(e.IsSealed), wsCfg.FindByEnvID(e.ID) != nil, e.ID == wsCfg.ActiveEnv}
+	}
+
 	if output.JSONMode {
-		output.JSON(envs)
+		output.JSON(list)
 		return
 	}
 
-	headers := []string{"ID", "NAME", "DEFAULT", "SEALED", "ACTIVE"}
+	headers := []string{"NAME", "ID", "PROTECTION", "KEY", "ACTIVE"}
 	var rows [][]string
-	for _, e := range envs {
-		def := ""
+	for _, e := range list {
+		name := e.Name
 		if e.IsDefault {
-			def = "✓"
+			name += " (default)"
 		}
-		sealed := ""
-		if e.IsSealed {
-			sealed = "✓"
+		key := "no key"
+		if e.KeyInWorkspace {
+			key = "key in workspace"
 		}
 		active := ""
-		if e.ID == wsCfg.ActiveEnv {
+		if e.Active {
 			active = "✓"
 		}
-		rows = append(rows, []string{e.ID, e.Name, def, sealed, active})
+		rows = append(rows, []string{name, e.ID, e.Protection, key, active})
 	}
 	output.Table(headers, rows)
 }
@@ -1304,6 +1410,10 @@ func handleStringSet(args []string) {
 	}
 
 	path := workspace.CSVPath(wsDir, section)
+	restore, err := workspace.Snapshot(path)
+	if err != nil {
+		output.Errorf("read %s: %s", path, err)
+	}
 	if err := workspace.SetRows(path, key, values, format); err != nil {
 		output.Errorf("set rows: %s", err)
 	}
@@ -1311,7 +1421,7 @@ func handleStringSet(args []string) {
 	if push {
 		c := mustClient()
 		if err := workspace.PushKey(c, key, values, format, section); err != nil {
-			failAPI(fmt.Sprintf("push %s", key), err)
+			failAPI(fmt.Sprintf("push %s%s", key, rollback(restore)), err)
 		}
 	}
 
@@ -1377,6 +1487,10 @@ func handleStringRm(args []string) {
 	}
 
 	path := workspace.CSVPath(wsDir, section)
+	restore, err := workspace.Snapshot(path)
+	if err != nil {
+		output.Errorf("read %s: %s", path, err)
+	}
 	if err := workspace.RemoveRows(path, key, locale); err != nil {
 		output.Errorf("remove rows: %s", err)
 	}
@@ -1384,7 +1498,7 @@ func handleStringRm(args []string) {
 	if push {
 		c := mustClient()
 		if err := workspace.PushKeyRemoval(c, key, locale); err != nil {
-			failAPI(fmt.Sprintf("push removal %s", key), err)
+			failAPI(fmt.Sprintf("push removal %s%s", key, rollback(restore)), err)
 		}
 	}
 
@@ -2112,6 +2226,7 @@ func handlePromotePreview(args []string) {
 	if err != nil {
 		failAPI("promotion preview", err)
 	}
+	resp.ApplyURL = guide.PromoteURL(c.DashboardURL(""), c.ProjectID(), targetID)
 
 	if output.JSONMode {
 		output.JSON(resp)
@@ -2130,6 +2245,71 @@ func handlePromotePreview(args []string) {
 		}
 	}
 	output.Table(headers, rows)
+	fmt.Printf("\nApply in the dashboard: %s\n", resp.ApplyURL)
+}
+
+func handleSDKConfig(args []string) {
+	envName := ""
+	for i := 0; i < len(args); i++ {
+		switch {
+		case args[i] == "--env" && i+1 < len(args):
+			i++
+			envName = args[i]
+		case strings.HasPrefix(args[i], "-"):
+			output.Fail(output.ExitUsage, "unknown flag: %s", args[i])
+		default:
+			output.Fail(output.ExitUsage, "usage: airstrings sdk-config [--env <name>]")
+		}
+	}
+
+	c := mustClient()
+	cfg, err := c.GetSDKConfig()
+	if err != nil {
+		failAPI("get sdk config", err)
+	}
+
+	var env *client.SDKEnvironment
+	var names []string
+	for i := range cfg.Environments {
+		e := &cfg.Environments[i]
+		names = append(names, e.Name)
+		if (envName == "" && e.IsDefault) || (envName != "" && (strings.EqualFold(e.Name, envName) || e.ID == envName)) {
+			env = e
+		}
+	}
+	if env == nil {
+		output.Fail(output.ExitNotFound, "environment %q does not exist in this project. Available: %s", envName, strings.Join(names, ", "))
+	}
+
+	keys := make([]string, len(env.PublicKeys))
+	for i, k := range env.PublicKeys {
+		keys[i] = k.PublicKey
+	}
+	snippets := guide.Snippets(cfg.OrgID, cfg.ProjectID, env.ID, keys)
+
+	if output.JSONMode {
+		output.JSON(map[string]any{
+			"org_id":      cfg.OrgID,
+			"project_id":  cfg.ProjectID,
+			"environment": env,
+			"protection":  guide.Protection(env.IsSealed),
+			"snippets":    snippets,
+		})
+		return
+	}
+
+	fmt.Printf("Organization:  %s\n", cfg.OrgID)
+	fmt.Printf("Project:       %s\n", cfg.ProjectID)
+	fmt.Printf("Environment:   %s (%s, %s)\n", env.Name, env.ID, guide.Protection(env.IsSealed))
+	for _, k := range keys {
+		fmt.Printf("Public key:    %s\n", k)
+	}
+	if len(keys) == 0 {
+		fmt.Println("Public key:    (none)")
+	}
+	for _, sn := range guide.SnippetOrder {
+		fmt.Printf("\n%s:\n\n%s\n", sn.Label, snippets[sn.Key])
+	}
 }
 
 func resolveEnvID(envs []client.Environment, name string) string {
@@ -2224,7 +2404,7 @@ func handleVariantsCreate(args []string) {
 func handleVariantsSet(args []string) {
 	usage := "usage: airstrings variants set <key> <variant> <locale>=<value>..."
 	if len(args) < 3 {
-		output.Fail(output.ExitUsage, usage)
+		output.Fail(output.ExitUsage, "%s", usage)
 	}
 	for _, a := range args[:2] {
 		if strings.HasPrefix(a, "-") {
@@ -2286,7 +2466,7 @@ func handleVariantsSet(args []string) {
 func handleVariantsAllocation(args []string) {
 	usage := "usage: airstrings variants allocation <key> <variant>=<pct>..."
 	if len(args) < 2 {
-		output.Fail(output.ExitUsage, usage)
+		output.Fail(output.ExitUsage, "%s", usage)
 	}
 	if strings.HasPrefix(args[0], "-") {
 		output.Fail(output.ExitUsage, "unknown flag: %s", args[0])
@@ -2391,7 +2571,7 @@ func handleVariantsRmVariant(args []string) {
 		pos = append(pos, a)
 	}
 	if len(pos) != 2 {
-		output.Fail(output.ExitUsage, usage)
+		output.Fail(output.ExitUsage, "%s", usage)
 	}
 	key, variant := pos[0], pos[1]
 
@@ -2444,7 +2624,7 @@ func handleVariantsPromote(args []string) {
 		pos = append(pos, a)
 	}
 	if len(pos) != 2 {
-		output.Fail(output.ExitUsage, usage)
+		output.Fail(output.ExitUsage, "%s", usage)
 	}
 	key, variant := pos[0], pos[1]
 

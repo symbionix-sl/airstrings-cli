@@ -134,11 +134,11 @@ func TestStatusReportsProtection(t *testing.T) {
 			want: `"protection": "protected"`,
 		},
 		{
-			name: "unsealed default env is yolo",
+			name: "unsealed default env is open",
 			handler: func(w http.ResponseWriter, r *http.Request) {
 				w.Write([]byte(envList(false)))
 			},
-			want: `"protection": "yolo"`,
+			want: `"protection": "open"`,
 		},
 		{
 			name: "api error is unknown",

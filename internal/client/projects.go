@@ -120,3 +120,29 @@ func (c *Client) PublishBundles(locales []string) (*PublishResponse, error) {
 	err := c.do("POST", c.envPath()+"/bundles/publish", nil, PublishRequest{Locales: locales}, &resp)
 	return &resp, err
 }
+
+type SDKPublicKey struct {
+	KeyID     string `json:"key_id"`
+	PublicKey string `json:"public_key"`
+}
+
+type SDKEnvironment struct {
+	ID         string         `json:"id"`
+	Name       string         `json:"name"`
+	IsDefault  bool           `json:"is_default"`
+	IsSealed   bool           `json:"is_sealed"`
+	PublicKeys []SDKPublicKey `json:"public_keys"`
+}
+
+type SDKConfig struct {
+	OrgID        string           `json:"org_id"`
+	ProjectID    string           `json:"project_id"`
+	Environments []SDKEnvironment `json:"environments"`
+}
+
+// GetSDKConfig returns IDs and public keys for every environment of the project.
+func (c *Client) GetSDKConfig() (*SDKConfig, error) {
+	var cfg SDKConfig
+	err := c.do("GET", c.projectPath()+"/sdk-config", nil, nil, &cfg)
+	return &cfg, err
+}

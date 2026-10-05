@@ -19,6 +19,8 @@ const (
 	ExitNotFound    = 4
 	ExitNetwork     = 5
 	ExitRateLimited = 6
+	ExitProtected   = 7
+	ExitQuota       = 8
 )
 
 var useColor = colorEnabled()
@@ -76,7 +78,25 @@ func Success(msg string) {
 
 // Fail prints to stderr and exits with the given code.
 func Fail(code int, format string, args ...any) {
-	fmt.Fprintf(os.Stderr, "Error: "+format+"\n", args...)
+	FailNext(code, fmt.Sprintf(format, args...), "")
+}
+
+// FailNext prints an error plus its one next step and exits with code. In JSON
+// mode it writes {"error":{"message","next_step","exit_code"}} to stderr.
+func FailNext(code int, message, nextStep string) {
+	if JSONMode {
+		body := map[string]any{"message": message, "exit_code": code}
+		if nextStep != "" {
+			body["next_step"] = nextStep
+		}
+		data, _ := json.Marshal(map[string]any{"error": body})
+		fmt.Fprintln(os.Stderr, string(data))
+		os.Exit(code)
+	}
+	fmt.Fprintf(os.Stderr, "Error: %s\n", message)
+	if nextStep != "" {
+		fmt.Fprintf(os.Stderr, "Next step: %s\n", nextStep)
+	}
 	os.Exit(code)
 }
 

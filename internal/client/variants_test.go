@@ -263,8 +263,8 @@ func TestStartExperiment_QuotaExceeded(t *testing.T) {
 	if apiErr.Body.Error.Code != "quota_exceeded" {
 		t.Errorf("expected code quota_exceeded, got %q", apiErr.Body.Error.Code)
 	}
-	if apiErr.ExitCode() != 3 {
-		t.Errorf("expected exit code 3, got %d", apiErr.ExitCode())
+	if apiErr.ExitCode() != 8 {
+		t.Errorf("expected exit code 8, got %d", apiErr.ExitCode())
 	}
 }
 

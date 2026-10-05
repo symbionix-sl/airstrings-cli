@@ -42,6 +42,20 @@ func New(apiKey, baseURL, projectID, envID string) *Client {
 func (c *Client) ProjectID() string { return c.projectID }
 func (c *Client) EnvID() string     { return c.envID }
 
+// DashboardURL maps the API host to its webapp host (api.X → app.X,
+// api-staging.X → app-staging.X) and appends path.
+func (c *Client) DashboardURL(path string) string {
+	return DashboardBase(c.baseURL) + path
+}
+
+func DashboardBase(apiBase string) string {
+	u, err := url.Parse(apiBase)
+	if err != nil || !strings.HasPrefix(u.Host, "api") {
+		return "https://app.airstrings.com"
+	}
+	return u.Scheme + "://app" + strings.TrimPrefix(u.Host, "api")
+}
+
 // APIError represents a structured error from the API.
 type APIError struct {
 	StatusCode int
@@ -54,6 +68,9 @@ func (e *APIError) Error() string {
 		for _, d := range e.Body.Error.Details {
 			msg += fmt.Sprintf("\n  - %s: %s", d.Field, d.Reason)
 		}
+		if e.Body.Error.NextStep != "" {
+			msg += "\nNext step: " + e.Body.Error.NextStep
+		}
 		return msg
 	}
 	return fmt.Sprintf("API error %d", e.StatusCode)
@@ -62,6 +79,12 @@ func (e *APIError) Error() string {
 // ExitCode maps an HTTP status to a CLI exit code so scripts and agents can
 // branch on the failure class. Values mirror internal/output exit codes.
 func (e *APIError) ExitCode() int {
+	switch e.Body.Error.Code {
+	case "environment_protected":
+		return 7
+	case "quota_exceeded":
+		return 8
+	}
 	switch e.StatusCode {
 	case 401, 403:
 		return 3 // auth
@@ -86,9 +109,10 @@ type ErrorResponse struct {
 }
 
 type ErrorBody struct {
-	Code    string            `json:"code"`
-	Message string            `json:"message"`
-	Details []ValidationError `json:"details,omitempty"`
+	Code     string            `json:"code"`
+	Message  string            `json:"message"`
+	NextStep string            `json:"next_step,omitempty"`
+	Details  []ValidationError `json:"details,omitempty"`
 }
 
 type ValidationError struct {

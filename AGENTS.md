@@ -19,6 +19,16 @@ command below is stable and machine-friendly.
   | 4    | not found    | no     |
   | 5    | network      | yes (backoff) |
   | 6    | rate limited | yes (backoff) |
+  | 7    | environment protected (production) | no — publish to staging; a human promotes |
+  | 8    | plan limit reached | no — a human upgrades |
+
+  Exit 3 also covers a read key used for a write and `env use <env>` when the
+  environment is open but this workspace has no key for it.
+
+- With `--json`, errors go to stderr as one JSON object:
+  `{"error":{"message":"…","next_step":"…","exit_code":7}}`. `next_step` is the
+  single action that unblocks you (a command or a dashboard link). MCP tool
+  errors carry the same message and `Next step:` text.
 
 - Any command + `--help`/`-h` prints its help text and exits 0 — nothing is
   executed, no side effects. Safe to probe usage this way.
@@ -46,11 +56,25 @@ the CLI resolves both automatically; supply the IDs to make calls fully stateles
 (zero discovery round-trips).
 
 Confirm what you're pointed at any time: `airstrings status --json` →
-`{source, project_id, env_id, base_url, protection, environments[...], mode, workspace_dir}`.
+`{source, project_id, env_id, base_url, protection, key_scope, hint, environments[...], mode, workspace_dir}`.
 `source` is `"workspace"` or `"env"`. `protection` is `"protected"` (production
-sealed — changes reach it via promote), `"yolo"` (direct publish to production
-enabled), or `"unknown"`; it is derived from one best-effort API call and
-degrades to `"unknown"` rather than failing, so `status` never errors on it.
+rejects direct writes — changes reach it only by promotion), `"open"` (production
+accepts direct publishing), or `"unknown"`. `key_scope` is `"read"`, `"write"` or
+`"unknown"`. `hint` is `{message, next_step}` for the current state. All are
+best-effort and degrade to `"unknown"`/null rather than failing.
+
+## Environments: staging key, protected production
+
+The onboarding key is a **staging write key** (64 hex characters). Production is
+protected by default, so you never need a production key:
+
+- Ship: write and `publish` to staging, then run `promote preview` and hand the
+  printed dashboard link to a human, who applies the promotion.
+- SDK setup for production: `airstrings sdk-config --env production` — works
+  with the staging key (public keys are not secret).
+- `airstrings env` lists every environment with `protection` and
+  `key_in_workspace`. `env use production` without a production key explains
+  the state and exits 7 (protected) or 3 (open: add a production key).
 
 ## Core commands
 
@@ -60,7 +84,8 @@ All accept `--json`.
 airstrings status                      # who am I / what env (discovery)
 airstrings project                     # project metadata
 airstrings locales                     # locales + string counts
-airstrings env                         # list environments (✓ = active)
+airstrings env                         # every env: protected/open, key in workspace or not
+airstrings sdk-config [--env <name>]   # org/project/env IDs + public keys + SDK snippets
 
 airstrings strings ls                  # remote strings; pages automatically
 airstrings strings ls --limit 50       # one bounded page
@@ -72,6 +97,7 @@ airstrings strings get <key>
 airstrings strings set <key> en="Hello" it="Ciao" --format text|icu [--section s] [--push]
 airstrings strings rm  <key> [--locale en] [--section s] [--push]
 #   set/rm write local CSVs; --push also syncs that one key to the API now.
+#   If the push fails, the CSV is restored and the error says so.
 
 airstrings push [--section s]          # upload all local CSVs to the API
 airstrings pull [--section s]          # download remote drafts to CSVs (OVERWRITES local)
@@ -80,7 +106,7 @@ airstrings sections list|create <name>|delete <id>
 airstrings publish [locale...]         # sign + publish bundles to the CDN
 airstrings bundles                     # list published bundles
 airstrings bundles pull [dir]          # download signed bundles for offline fallback
-airstrings promote preview [--from <env>] [--to <env>]  # preview env→env string diff (read-only)
+airstrings promote preview [--from <env>] [--to <env>]  # preview env→env diff (read-only) + apply_url for a human
 airstrings variants create <key>                        # create an A/B experiment on a string
 airstrings variants set <key> <name> en="…" [--format text|icu]  # add/update a variant value
 airstrings variants allocation <key> <name>=<pct> ...   # split traffic across the experiment's variants
@@ -118,7 +144,7 @@ not interpolated) — use `icu` for interpolation.
 ## Typical agent flow
 
 ```
-export AIRSTRINGS_API_KEY=ask_live_xxx
+export AIRSTRINGS_API_KEY=<staging-write-key>                # 64 hex chars, from onboarding
 airstrings status --json                                   # confirm target
 airstrings strings set welcome.title en="Welcome" --format text --push
 airstrings strings ls --key-prefix welcome. --json
