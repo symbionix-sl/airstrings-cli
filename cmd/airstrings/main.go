@@ -708,9 +708,9 @@ func parseKeyAndURL(args []string) (string, string) {
 	if len(args) < 1 {
 		output.Fail(output.ExitUsage, "usage: provide an API key")
 	}
-	apiKey := args[0]
-	var baseURL string
-	for i := 1; i < len(args); i++ {
+	var apiKey string
+	baseURL := os.Getenv("AIRSTRINGS_BASE_URL")
+	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--url", "--base-url":
 			i++
@@ -721,7 +721,13 @@ func parseKeyAndURL(args []string) (string, string) {
 			if strings.HasPrefix(args[i], "-") {
 				output.Fail(output.ExitUsage, "unknown flag: %s", args[i])
 			}
+			if apiKey == "" {
+				apiKey = args[i]
+			}
 		}
+	}
+	if apiKey == "" {
+		output.Fail(output.ExitUsage, "usage: provide an API key")
 	}
 	return apiKey, baseURL
 }
@@ -1818,13 +1824,13 @@ const firstPullHint = `First pull — commit this folder so your apps ship with 
   Web:          Node seeds from <cwd>/airstrings/bundles/ automatically; browsers import bundle JSON at build time
   React Native: require() each bundle JSON, or ship via the iOS + Android steps above (RN uses both native bundles)
 Then run: airstrings doctor   (verifies your project is wired up)
-See: docs/contracts/bundled-fallback.md
+See: https://docs.airstrings.com/docs/specs/bundled-fallback
 `
 
 const refreshPullHint = `Bundles refreshed — rebuild your app to ship the updated strings.
 New locale files must be embedded like the first pull (iOS folder ref / Android assets / Web import / RN require).
 Verify wiring: airstrings doctor
-See: docs/contracts/bundled-fallback.md
+See: https://docs.airstrings.com/docs/specs/bundled-fallback
 `
 
 func handleBundlesPull(args []string) {

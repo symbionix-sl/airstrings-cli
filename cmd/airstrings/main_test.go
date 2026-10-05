@@ -550,3 +550,27 @@ func TestInitRefusesToClobberExistingWorkspace(t *testing.T) {
 		t.Errorf("after --purge want single env_staging credential, got %+v", cfg.Credentials)
 	}
 }
+
+func TestParseKeyAndURL(t *testing.T) {
+	cases := []struct {
+		name    string
+		env     string
+		args    []string
+		wantKey string
+		wantURL string
+	}{
+		{"key then flag", "", []string{"k1", "--url", "https://x"}, "k1", "https://x"},
+		{"flag then key", "", []string{"--url", "https://x", "k1"}, "k1", "https://x"},
+		{"env default", "https://env", []string{"k1"}, "k1", "https://env"},
+		{"flag beats env", "https://env", []string{"k1", "--base-url", "https://x"}, "k1", "https://x"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Setenv("AIRSTRINGS_BASE_URL", c.env)
+			key, url := parseKeyAndURL(c.args)
+			if key != c.wantKey || url != c.wantURL {
+				t.Fatalf("got (%q, %q), want (%q, %q)", key, url, c.wantKey, c.wantURL)
+			}
+		})
+	}
+}
