@@ -34,8 +34,18 @@ func colorEnabled() bool {
 	if os.Getenv("NO_COLOR") != "" {
 		return false
 	}
-	info, err := os.Stdout.Stat()
-	return err == nil && info.Mode()&os.ModeCharDevice != 0
+	return IsTerminal(os.Stdout)
+}
+
+// ponytail: a character device other than /dev/null counts as a terminal; a real
+// isatty needs per-OS ioctls (or golang.org/x/term) if another device ever matters.
+func IsTerminal(f *os.File) bool {
+	info, err := f.Stat()
+	if err != nil || info.Mode()&os.ModeCharDevice == 0 {
+		return false
+	}
+	null, err := os.Stat(os.DevNull)
+	return err != nil || !os.SameFile(info, null)
 }
 
 func checkMark() string {

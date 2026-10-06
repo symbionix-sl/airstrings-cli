@@ -906,8 +906,7 @@ func failPending(p *workspace.PendingLogin) {
 }
 
 func isInteractive() bool {
-	info, err := os.Stdout.Stat()
-	return stdinIsTTY() && err == nil && info.Mode()&os.ModeCharDevice != 0 && !output.JSONMode && os.Getenv("CI") == ""
+	return stdinIsTTY() && output.IsTerminal(os.Stdout) && !output.JSONMode && os.Getenv("CI") == ""
 }
 
 func handleLogout(args []string) {
@@ -2238,8 +2237,7 @@ func handleDoctor(args []string) {
 }
 
 func stdinIsTTY() bool {
-	info, err := os.Stdin.Stat()
-	return err == nil && info.Mode()&os.ModeCharDevice != 0
+	return output.IsTerminal(os.Stdin)
 }
 
 func printDoctorReport(rep *doctor.Report) {

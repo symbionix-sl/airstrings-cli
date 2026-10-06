@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Re-running `login` / keyless `init` while a login is pending reopens the approval page (unless `--no-browser` or `AIRSTRINGS_NO_BROWSER`), so a closed tab no longer leaves the login stuck until the code expires.
+- Stdin or stdout redirected to `/dev/null` is no longer treated as a terminal, so `login` / `init` run that way by an agent wait 90 s instead of blocking until the code expires.
 
 ## [0.18.3] - 2026-10-06
 

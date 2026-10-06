@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -286,5 +287,32 @@ func TestLoginRerunReopensBrowser(t *testing.T) {
 func TestLoginRerunNoBrowserDoesNotOpen(t *testing.T) {
 	if _, opened := pendingRerun(t, "--no-browser"); opened != "" {
 		t.Errorf("browser opened with %q", opened)
+	}
+}
+
+func TestLoginDevNullIsNonInteractive(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/cli/auth/start" {
+			w.Write([]byte(strings.Replace(strings.Replace(startReply, `"interval":5`, `"interval":1`, 1), `"expires_in":600`, `"expires_in":3`, 1)))
+			return
+		}
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte(`{"error":{"code":"authorization_pending","message":"pending"}}`))
+	}))
+	t.Cleanup(srv.Close)
+	null, err := os.OpenFile(os.DevNull, os.O_RDWR, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer null.Close()
+	cmd := exec.Command(binPath, "login", "--url", srv.URL, "--no-browser")
+	cmd.Dir = t.TempDir()
+	cmd.Env = scrubbedEnv()
+	cmd.Stdin, cmd.Stdout = null, null
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	cmd.Run()
+	if code := cmd.ProcessState.ExitCode(); code != 9 {
+		t.Errorf("exit = %d, want 9 (non-interactive)\nstderr: %s", code, stderr.String())
 	}
 }
