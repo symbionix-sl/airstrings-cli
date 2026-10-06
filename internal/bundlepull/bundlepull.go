@@ -397,6 +397,7 @@ func fetchBundle(hc *http.Client, rawURL string, deadline time.Duration) ([]byte
 	if err != nil {
 		return nil, err
 	}
+	req.Header.Set("User-Agent", client.UserAgent)
 	var timer *time.Timer
 	if deadline > 0 {
 		timer = time.AfterFunc(deadline, cancel)

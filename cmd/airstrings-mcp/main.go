@@ -6,11 +6,15 @@ import (
 	"fmt"
 	"io"
 	"os"
+
+	"github.com/symbionix-sl/airstrings-cli/internal/client"
 )
 
 var version = "dev"
 
 const protocolVersion = "2024-11-05"
+
+func init() { client.UserAgent = "airstrings-mcp/" + version }
 
 func main() {
 	server := &MCPServer{}

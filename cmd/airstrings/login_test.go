@@ -198,3 +198,16 @@ func TestInitHelpNoKeyRequired(t *testing.T) {
 		t.Errorf("login help = %s", stdout)
 	}
 }
+
+func TestCLISendsUserAgent(t *testing.T) {
+	var ua string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ua = r.UserAgent()
+		w.Write([]byte(startReply))
+	}))
+	t.Cleanup(srv.Close)
+	runCLI(t, "login", "--url", srv.URL)
+	if !strings.HasPrefix(ua, "airstrings-cli/") {
+		t.Errorf("User-Agent = %q", ua)
+	}
+}

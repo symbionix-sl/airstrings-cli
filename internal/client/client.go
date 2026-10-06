@@ -14,6 +14,8 @@ import (
 	"unicode"
 )
 
+var UserAgent = "airstrings-cli/dev"
+
 const DefaultBaseURL = "https://api.airstrings.com"
 
 const (
@@ -212,6 +214,7 @@ func (c *Client) do(method, path string, query url.Values, body any, result any)
 		return fmt.Errorf("create request: %w", err)
 	}
 
+	req.Header.Set("User-Agent", UserAgent)
 	if c.apiKey != "" {
 		req.Header.Set("X-API-Key", c.apiKey)
 	}
@@ -295,6 +298,7 @@ func (c *Client) doMultipart(path string, fields map[string]string, fileName str
 		return fmt.Errorf("create request: %w", err)
 	}
 
+	req.Header.Set("User-Agent", UserAgent)
 	if c.apiKey != "" {
 		req.Header.Set("X-API-Key", c.apiKey)
 	}

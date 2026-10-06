@@ -23,6 +23,8 @@ import (
 
 var version = "dev"
 
+func init() { client.UserAgent = "airstrings-cli/" + version }
+
 func main() {
 	args := os.Args[1:]
 	if len(args) == 0 {

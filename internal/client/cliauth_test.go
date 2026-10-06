@@ -112,3 +112,20 @@ func TestRevokeOrgKey(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
+
+func TestUserAgentOnEveryRequest(t *testing.T) {
+	var got []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = append(got, r.UserAgent())
+		w.Write([]byte(`{"device_code":"d","user_code":"U","verification_uri_complete":"x","interval":5,"expires_in":600}`))
+	}))
+	defer srv.Close()
+	old := UserAgent
+	UserAgent = "airstrings-cli/9.9.9"
+	defer func() { UserAgent = old }()
+	New("", srv.URL, "", "").StartCLIAuth("n")
+	New("k", srv.URL, "p", "e").CreateImport([]byte("key,locale,value,format\n"), nil)
+	if len(got) != 2 || got[0] != "airstrings-cli/9.9.9" || got[1] != "airstrings-cli/9.9.9" {
+		t.Errorf("User-Agent = %v", got)
+	}
+}

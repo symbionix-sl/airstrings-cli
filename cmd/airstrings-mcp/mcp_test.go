@@ -1196,3 +1196,17 @@ func TestMCP_InitLegacyKeyFilesOnlyBoundEnv(t *testing.T) {
 		t.Errorf("credentials = %+v", cfg.Credentials)
 	}
 }
+
+func TestMCP_SendsUserAgent(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	var ua string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ua = r.UserAgent()
+		w.Write([]byte(mcpStartReply))
+	}))
+	t.Cleanup(srv.Close)
+	callTool(t, &MCPServer{}, 1, "airstrings_login", map[string]any{"base_url": srv.URL})
+	if !strings.HasPrefix(ua, "airstrings-mcp/") {
+		t.Errorf("User-Agent = %q", ua)
+	}
+}
