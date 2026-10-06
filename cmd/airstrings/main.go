@@ -261,6 +261,7 @@ Native, iOS, Android and Go SDKs. Defaults to the production (default) environme
 
 Works with any key of the project — a staging key can print production's SDK
 config, so a workspace never needs a production key just to set up an SDK.
+Every value printed is public, not a secret: safe to show, commit and embed.
 
 Flags:
   --env <name>            Environment name or ID (default: production)
@@ -2229,23 +2230,18 @@ func handleSDKConfig(args []string) {
 		output.Fail(output.ExitNotFound, "environment %q does not exist in this project. Available: %s", envName, strings.Join(names, ", "))
 	}
 
+	if output.JSONMode {
+		output.JSON(guide.SDKConfig(cfg, *env))
+		return
+	}
+
 	keys := make([]string, len(env.PublicKeys))
 	for i, k := range env.PublicKeys {
 		keys[i] = k.PublicKey
 	}
 	snippets := guide.Snippets(cfg.OrgID, cfg.ProjectID, env.ID, keys)
 
-	if output.JSONMode {
-		output.JSON(map[string]any{
-			"org_id":      cfg.OrgID,
-			"project_id":  cfg.ProjectID,
-			"environment": guide.SDKEnvironment(*env),
-			"protection":  guide.Protection(env.IsSealed),
-			"snippets":    snippets,
-		})
-		return
-	}
-
+	fmt.Printf("%s\n\n", guide.PublicNotice)
 	fmt.Printf("Organization:  %s\n", cfg.OrgID)
 	fmt.Printf("Project:       %s\n", cfg.ProjectID)
 	fmt.Printf("Environment:   %s (%s, %s)\n", env.Name, env.ID, guide.Protection(env.IsSealed))

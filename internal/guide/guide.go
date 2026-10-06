@@ -99,6 +99,26 @@ func Status(activeName string, activeIsDefault bool, defName string, defSealed, 
 	}
 }
 
+// PublicNotice states that SDK config is safe to show: agents otherwise mistake
+// the Ed25519 public keys for credentials.
+const PublicNotice = "All values are public, not secrets: safe to show, commit and embed in app code. They contain no API key."
+
+// SDKConfig is the sdk-config payload shared by the CLI --json output and the MCP tool.
+func SDKConfig(cfg *client.SDKConfig, env client.SDKEnvironment) map[string]any {
+	keys := make([]string, len(env.PublicKeys))
+	for i, k := range env.PublicKeys {
+		keys[i] = k.PublicKey
+	}
+	return map[string]any{
+		"notice":      PublicNotice,
+		"org_id":      cfg.OrgID,
+		"project_id":  cfg.ProjectID,
+		"environment": SDKEnvironment(env),
+		"protection":  Protection(env.IsSealed),
+		"snippets":    Snippets(cfg.OrgID, cfg.ProjectID, env.ID, keys),
+	}
+}
+
 // Snippets returns ready-to-paste SDK initialisers per platform, using the
 // configuration field names from each SDK README.
 func Snippets(orgID, projectID, envID string, publicKeys []string) map[string]string {

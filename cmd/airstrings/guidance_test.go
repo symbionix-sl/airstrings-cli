@@ -333,3 +333,24 @@ func TestEnvIDOverrideNotice(t *testing.T) {
 		t.Errorf("notice printed without an override:\n%s", stderr)
 	}
 }
+
+func TestSDKConfigSaysValuesArePublic(t *testing.T) {
+	srv := guidanceServer(t, true, nil)
+	dir := stagingWorkspace(t, srv.URL)
+
+	_, stdout, stderr := runSharedInDir(t, dir, nil, "sdk-config")
+	if first, _, _ := strings.Cut(stdout, "\n"); !strings.Contains(first, "not secrets") {
+		t.Errorf("text output does not open with the public notice:\n%s%s", stdout, stderr)
+	}
+
+	_, stdout, stderr = runSharedInDir(t, dir, nil, "sdk-config", "--json")
+	var out struct {
+		Notice string `json:"notice"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &out); err != nil {
+		t.Fatalf("json: %v\n%s%s", err, stdout, stderr)
+	}
+	if !strings.Contains(out.Notice, "not secrets") {
+		t.Errorf("notice = %q", out.Notice)
+	}
+}

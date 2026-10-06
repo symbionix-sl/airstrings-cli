@@ -940,7 +940,7 @@ func TestMCP_ToolCall_SDKConfigFromStagingKey(t *testing.T) {
 		t.Fatalf("tool error: %s", res.Content[0].Text)
 	}
 	text := res.Content[0].Text
-	for _, w := range []string{`"protection":"protected"`, `"id":"env_prod"`, `publicKeys: ['UFJPRA==']`, `"org_id":"org_test"`} {
+	for _, w := range []string{`"protection":"protected"`, `"id":"env_prod"`, `publicKeys: ['UFJPRA==']`, `"org_id":"org_test"`, `"notice":"All values are public, not secrets`} {
 		if !strings.Contains(text, w) {
 			t.Errorf("result missing %s:\n%s", w, text)
 		}
@@ -991,4 +991,16 @@ func TestMCP_ToolCall_StatusAndEnvList(t *testing.T) {
 			t.Errorf("env_list missing %s:\n%s", w, envs)
 		}
 	}
+}
+
+func TestMCP_SDKConfigDescriptionSaysPublic(t *testing.T) {
+	for _, tool := range toolDefs {
+		if tool.Name == "airstrings_sdk_config" {
+			if !strings.HasPrefix(tool.Description, "Public, non-secret") {
+				t.Errorf("description must lead with the public notice: %s", tool.Description)
+			}
+			return
+		}
+	}
+	t.Fatal("airstrings_sdk_config not registered")
 }

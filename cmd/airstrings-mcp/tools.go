@@ -109,7 +109,7 @@ var toolDefs = []ToolDef{
 	},
 	{
 		Name:        "airstrings_sdk_config",
-		Description: "SDK setup values for one environment: organization, project and environment IDs, Ed25519 public key(s), protection (protected/open) and ready-to-paste initializers for web, react_native, ios, android and go. Works with any key of the project — a staging key returns production's config, so no production key is needed for SDK setup.",
+		Description: "Public, non-secret SDK setup values for one environment — safe to show the user, commit and embed in app code; no API key or secret is returned. Returns organization, project and environment IDs, Ed25519 public key(s) (verification keys, not credentials), protection (protected/open) and ready-to-paste initializers for web, react_native, ios, android and go. Works with any API key of the project — a staging key returns production's config, so no production key is needed for SDK setup.",
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]Property{
@@ -888,17 +888,7 @@ func handleToolSDKConfig(raw json.RawMessage) *CallToolResult {
 	for _, e := range cfg.Environments {
 		names = append(names, e.Name)
 		if (args.Env == "" && e.IsDefault) || (args.Env != "" && (strings.EqualFold(e.Name, args.Env) || e.ID == args.Env)) {
-			keys := make([]string, len(e.PublicKeys))
-			for i, k := range e.PublicKeys {
-				keys[i] = k.PublicKey
-			}
-			out, _ := json.Marshal(map[string]any{
-				"org_id":      cfg.OrgID,
-				"project_id":  cfg.ProjectID,
-				"environment": guide.SDKEnvironment(e),
-				"protection":  guide.Protection(e.IsSealed),
-				"snippets":    guide.Snippets(cfg.OrgID, cfg.ProjectID, e.ID, keys),
-			})
+			out, _ := json.Marshal(guide.SDKConfig(cfg, e))
 			return textResult(string(out))
 		}
 	}

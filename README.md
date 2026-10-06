@@ -74,7 +74,7 @@ airstrings sdk-config --env staging       # another environment
 airstrings sdk-config --env production --json
 ```
 
-Prints the organization, project and environment IDs, the environment's Ed25519 public key(s), and a ready-to-paste initializer for the Web, React Native, iOS, Android and Go SDKs. Public keys are not secret, so any key of the project works — a staging key prints production's config.
+Prints the organization, project and environment IDs, the environment's Ed25519 public key(s), and a ready-to-paste initializer for the Web, React Native, iOS, Android and Go SDKs. Every value is public, not a secret — safe to show, commit and embed in app code — so any API key of the project works — a staging key prints production's config.
 
 ## Usage
 

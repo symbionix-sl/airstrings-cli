@@ -71,7 +71,9 @@ protected by default, so you never need a production key:
 - Ship: write and `publish` to staging, then run `promote preview` and hand the
   printed dashboard link to a human, who applies the promotion.
 - SDK setup for production: `airstrings sdk-config --env production` — works
-  with the staging key (public keys are not secret).
+  with the staging key. Everything it returns (IDs, Ed25519 public keys,
+  snippets) is public, not a secret: show it, commit it and embed it in app
+  code. It never contains an API key.
 - `airstrings env` lists every environment with `protection` and
   `key_in_workspace`. `env use production` without a production key explains
   the state and exits 7 (protected) or 3 (open: add a production key).
