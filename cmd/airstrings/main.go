@@ -1332,7 +1332,7 @@ func handleAPIKeyRotate(args []string) {
 
 	if cred.APIKey == "" {
 		output.FailNext(output.ExitUsage, "nothing to rotate: this workspace uses your login key, not a stored project key",
-			fmt.Sprintf("For CI, create a project key at %s/projects/%s/api-keys and set AIRSTRINGS_API_KEY", client.DashboardBase(cred.BaseURL), wsCfg.ProjectID))
+			fmt.Sprintf("Create a project key at %s/projects/%s/api-keys, then run: airstrings init <key>", client.DashboardBase(cred.BaseURL), wsCfg.ProjectID))
 	}
 
 	result, err := workspace.RotateKey(wsDir, wsCfg, cred)
@@ -3102,7 +3102,7 @@ func handleInit(args []string) {
 		fmt.Printf("\nSDK setup for %s (embed in your app):\n\n", prod.Name)
 		printSDKConfig(res.SDK, prod)
 	}
-	fmt.Printf("\nNext: airstrings strings set <key> --values '{\"en\":\"...\"}' --push, then airstrings publish\n")
+	fmt.Printf("\nNext: airstrings strings set <key> en=\"...\" --format text --push, then airstrings publish\n")
 }
 
 func hasFlag(args []string, flag string) bool {

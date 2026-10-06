@@ -13,7 +13,7 @@ import (
 var ErrLoginPending = errors.New("login not approved yet")
 
 const (
-	PendingNextStep = "Open the URL and approve the login (an owner of the AirStrings organization must approve), then re-run this command"
+	PendingNextStep = "Ask an organization owner to open verification_uri_complete and approve, then retry"
 	RerunPollBudget = 30 * time.Second
 )
 

@@ -53,7 +53,7 @@ var stringsLsSchema = InputSchema{
 var toolDefs = []ToolDef{
 	{
 		Name:        "airstrings_init",
-		Description: "Initialize an AirStrings workspace in the current directory. Without an API key it uses AIRSTRINGS_ORG_API_KEY, AIRSTRINGS_API_KEY or the stored login; with none it starts a login and returns status \"pending\" with a URL for the user to approve, then call it again. An org key creates a project named after the folder unless project is given.",
+		Description: "Bind a directory to an AirStrings project. Without api_key it uses AIRSTRINGS_ORG_API_KEY, AIRSTRINGS_API_KEY or the stored login; if none, it returns status \"pending\": the user approves verification_uri_complete, then call again. An org key creates a project named after the folder unless project is set.",
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]Property{
@@ -67,7 +67,7 @@ var toolDefs = []ToolDef{
 	},
 	{
 		Name:        "airstrings_login",
-		Description: "Log in to AirStrings and store an org key. The first call returns status \"pending\" with verification_uri_complete: ask the user to open it (an owner of the organization must approve), then call again to finish.",
+		Description: "Log in and store an org key. Returns status \"pending\": an organization owner approves verification_uri_complete, then call again.",
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]Property{
