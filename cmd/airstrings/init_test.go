@@ -142,3 +142,19 @@ func TestInitProjectFlagSelectsExisting(t *testing.T) {
 		t.Errorf("workspace project = %q, want proj_old", cfg.ProjectID)
 	}
 }
+
+func TestProjectLsWithOrgKey(t *testing.T) {
+	reply := ""
+	srv := initAPI(t, &reply)
+	code, stdout, stderr := runSharedInDir(t, t.TempDir(), []string{"AIRSTRINGS_ORG_API_KEY=as_org_env", "AIRSTRINGS_BASE_URL=" + srv.URL}, "project", "ls", "--json")
+	if code != 0 || !strings.Contains(stdout, `"id": "proj_old"`) {
+		t.Errorf("exit = %d\nstdout: %s\nstderr: %s", code, stdout, stderr)
+	}
+}
+
+func TestProjectLsWithProjectKeyErrors(t *testing.T) {
+	code, _, stderr := runSharedInDir(t, t.TempDir(), []string{"AIRSTRINGS_API_KEY=as_proj_k", "AIRSTRINGS_BASE_URL=https://api.example.com"}, "project", "ls")
+	if code != 2 || !strings.Contains(stderr, "airstrings login") {
+		t.Errorf("exit = %d\nstderr: %s", code, stderr)
+	}
+}

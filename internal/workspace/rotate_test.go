@@ -44,7 +44,7 @@ func newAPIKeyAPI(ownPermission string) *apiKeyAPI {
 		revokeFail: make(map[string]bool),
 		mux:        http.NewServeMux(),
 	}
-	api.mux.HandleFunc("/v1/projects", func(w http.ResponseWriter, r *http.Request) {
+	api.mux.HandleFunc("/v1/projects/p1", func(w http.ResponseWriter, r *http.Request) {
 		api.mu.Lock()
 		defer api.mu.Unlock()
 		key := r.Header.Get("X-API-Key")

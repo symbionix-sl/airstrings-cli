@@ -65,3 +65,18 @@ func TestCreateProject(t *testing.T) {
 		t.Errorf("unexpected project: %+v", p)
 	}
 }
+
+func TestGetProject_UsesProjectPathWhenKnown(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/projects/proj_a" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+		w.Write([]byte(`{"id":"proj_a","name":"A"}`))
+	}))
+	defer srv.Close()
+
+	p, err := New("as_org_x", srv.URL, "proj_a", "").GetProject()
+	if err != nil || p.ID != "proj_a" {
+		t.Fatalf("GetProject() = %+v, %v", p, err)
+	}
+}

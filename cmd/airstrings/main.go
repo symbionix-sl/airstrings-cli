@@ -748,6 +748,26 @@ func printEnvStatus(env workspace.EnvAuth) {
 
 // --- Auth commands ---
 
+func handleProjectLs() {
+	var wsCfg *workspace.WorkspaceConfig
+	if wsDir, err := workspace.Find(); err == nil {
+		wsCfg, _ = workspace.LoadConfig(wsDir)
+	}
+	auth, ok := workspace.OrgAuth(wsCfg)
+	if !ok {
+		output.FailNext(output.ExitUsage, "listing projects needs an org key", "Run: airstrings login (or set AIRSTRINGS_ORG_API_KEY)")
+	}
+	projects, err := client.New(auth.Key, auth.BaseURL, "", "").ListProjects()
+	if err != nil {
+		failAPI("list projects", err)
+	}
+	rows := make([][]string, len(projects))
+	for i, p := range projects {
+		rows[i] = []string{p.ID, client.StripControl(p.Name), strconv.Itoa(p.StringCount)}
+	}
+	output.Auto(projects, []string{"ID", "NAME", "STRINGS"}, rows)
+}
+
 func handleLogin(args []string) {
 	baseURL, noBrowser := parseLoginFlags(args)
 	key := login(baseURL, noBrowser)
@@ -999,7 +1019,11 @@ func handleStatus(args []string) {
 
 func handleProject(args []string) {
 	if len(args) > 0 && args[0] == "use" {
-		output.Errorf("workspace is bound to one project — init a new workspace for a different project")
+		output.Errorf("workspace is bound to one project — run: airstrings init --project <id> --purge")
+	}
+	if len(args) > 0 && args[0] == "ls" {
+		handleProjectLs()
+		return
 	}
 	for _, a := range args {
 		if strings.HasPrefix(a, "-") {

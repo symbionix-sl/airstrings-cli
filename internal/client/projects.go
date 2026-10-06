@@ -13,10 +13,14 @@ type Project struct {
 	UpdatedAt     string `json:"updated_at"`
 }
 
-// GetProject returns the project bound to this API key.
+// GetProject returns the client's project, or the one bound to the key when no project is set.
 func (c *Client) GetProject() (*Project, error) {
+	path := "/v1/projects"
+	if c.projectID != "" {
+		path = c.projectPath()
+	}
 	var p Project
-	err := c.do("GET", "/v1/projects", nil, nil, &p)
+	err := c.do("GET", path, nil, nil, &p)
 	return &p, err
 }
 
