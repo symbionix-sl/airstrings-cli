@@ -48,19 +48,40 @@ Initialize a workspace in your project directory:
 
 ```bash
 cd my-project
-airstrings init <staging-write-key>
+airstrings init
 ```
 
-Use the **staging write key** shown during onboarding in the dashboard. API keys are 64-character hex strings (e.g. `3f9c…e21a`) scoped to one project and one environment. This validates the key, auto-detects your project and environments, and stores everything in `.airstrings/config.json`. Each project has its own workspace — no shared global config.
+With no key, `init` opens the browser to log in (an owner of your organization approves), stores an org key in `~/.config/airstrings/credentials.json`, creates a project named after the folder and writes `.airstrings/config.json`. Use `--name <name>` to name it, or `--project <id>` to bind an existing project. Without a terminal it prints the approval URL and exits 9 — re-run the same command after approving.
 
-Production is **protected** by default: it rejects direct writes and publishing, and changes reach it only when a human promotes staging in the dashboard. An agent therefore never needs a production key — it publishes to staging, and `airstrings sdk-config --env production` gives it everything the SDK needs for production.
+Already have a project key (`as_proj_…`, from the dashboard's API keys page)? `airstrings init <project-key>` binds the folder to that project. One project key covers every environment.
+
+Staging is the active environment after `init`. Production is **protected** by default: it rejects direct writes and publishing, and changes reach it only by promotion — a human in the dashboard, or `airstrings promote --to production` with a full-power org key. `airstrings sdk-config --env production` gives an agent everything the SDK needs for production.
+
+### Keys
+
+| Key | Prefix | Covers | Get it |
+|---|---|---|---|
+| Org key | `as_org_` | every project of the org | `airstrings login` |
+| Project key | `as_proj_` | every environment of one project | dashboard → API keys |
+| Legacy environment key | 64 hex | one environment | created before 0.18 |
+
+Precedence: `AIRSTRINGS_ORG_API_KEY` > `AIRSTRINGS_API_KEY` > workspace key > stored login. In CI, put a project key in `AIRSTRINGS_API_KEY` — never an org key.
+
+```bash
+airstrings login                    # log in again (revokes the previous org key)
+airstrings logout                   # revoke and forget the stored org key
+airstrings project ls               # projects of the org (org key)
+airstrings --project <id> status    # run against another project (org key)
+airstrings apikey ls                # the project's keys
+airstrings apikey rotate            # rotate the workspace key
+```
 
 ### Environments
 
 ```bash
 airstrings env                      # every environment: protected/open, key in workspace or not
 airstrings env use staging          # switch to staging
-airstrings env add <api-key>        # add credentials for another environment
+airstrings env add <api-key>        # add a legacy environment key (deprecated)
 airstrings env rm staging           # remove environment credentials
 airstrings -e -u staging            # shorthand for env use
 airstrings status                   # project, env, key scope, protection + next step
@@ -275,14 +296,14 @@ With `--json`, errors are written to stderr as `{"error":{"message":"…","next_
 | 6 | rate limited (retry) |
 | 7 | environment protected — publish to staging, a human promotes |
 | 8 | plan limit reached — upgrade |
+| 9 | login pending — open the printed URL, approve, re-run |
 
 ## Configuration
 
 Config is stored per-project in `.airstrings/config.json` (like `.git/config`). No global config — each workspace is self-contained with its own credentials and active environment.
 
 ```bash
-airstrings init <api-key> [--url <base-url>]      # create workspace and authenticate
-airstrings env add <api-key> [--url <base-url>]   # add environment credentials
+airstrings init [<api-key>] [--url <base-url>]    # create workspace (logs in without a key)
 airstrings env rm <name>                          # remove environment credentials
 airstrings env use <name>                         # switch environment
 airstrings status                                 # show active context

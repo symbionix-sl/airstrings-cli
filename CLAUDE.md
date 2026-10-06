@@ -78,7 +78,7 @@ When adding a new command:
 
 - Stored per-project in `.airstrings/config.json` (no global config)
 - Workspace is found by walking up from cwd (like `.git`)
-- `init <api-key>` creates the workspace and stores credentials in one step
+- `init [<api-key>]` creates the workspace; with no key it logs in (org key stored in `~/.config/airstrings/credentials.json`) and creates the project
 - Each workspace is self-contained: credentials, active env, project info
 - `env use` switches active environment within the workspace
 - Config dir created with `0700` permissions, files with `0600`
@@ -103,14 +103,14 @@ Local workspace for AI-friendly string management. Initialized via `airstrings i
   login/login.csv             # Section "login" strings
 ```
 
-- `init <api-key>` creates workspace with credentials and section dirs
+- `init [<api-key>]` creates workspace with credentials and section dirs (`workspace.Setup`, shared with MCP `airstrings_init`)
 - `strings set/rm` manipulate CSVs locally without API calls; `--push` also syncs that single key to the API immediately (`workspace.PushKey`/`PushKeyRemoval`: upsert via `UpsertString` — creating the section remotely if needed — full-key removal via `DeleteString`, locale-only removal via nil-value upsert)
 - `strings ls --local` lists local workspace strings offline (no client constructed); reads workspace CSVs via `listLocalStrings`
 - `push` uploads all local strings to API in bulk via the import endpoint (creates sections remotely if needed)
 - `pull` downloads all remote strings into organized CSVs (overwrites local state)
 - Workspace is found by walking up from cwd (like `.git`). `workspace.Find()` handles this
 - CSV format: `key,locale,value,format` — one row per key+locale pair
-- Env-var auth (headless/CI): `AIRSTRINGS_API_KEY` (+ optional `AIRSTRINGS_PROJECT_ID`/`AIRSTRINGS_ENV_ID`/`AIRSTRINGS_BASE_URL`) overrides the workspace. `workspace.ClientFromEnv()` resolves project + default env from a scoped key; `mustClient()`/`clientFor()` prefer it over `ResolveClient()`. See [AGENTS.md](AGENTS.md) for the agent-facing contract
+- Key precedence: `AIRSTRINGS_ORG_API_KEY` > `AIRSTRINGS_API_KEY` > workspace key > stored login (`workspace.ResolveAuth`). `workspace.Resolve` builds every client (CLI `mustClient`/`clientFor`, MCP via `ResolveClient`); org-scoped ops use `workspace.OrgAuth`. Exit 9 = login pending. See [AGENTS.md](AGENTS.md) for the agent-facing contract
 
 ### MCP Server
 

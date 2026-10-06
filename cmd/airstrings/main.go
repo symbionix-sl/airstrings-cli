@@ -133,16 +133,21 @@ func printUsage() {
 Usage: airstrings <command> [options]
 
 Setup:
-  init <api-key> [--url <base-url>]     Initialize workspace and authenticate
-                  [--purge]             Re-init and remove local strings
+  init [<api-key>] [--name <name>]      Bind this folder to a project. With no key
+       [--url <base-url>] [--purge]     it logs in and creates a project named
+                                        after the folder (--project to reuse one)
+  login [--no-browser]                  Log in through the browser; stores an
+                                        org key in ~/.config/airstrings
+  logout                                Revoke and forget the stored org key
   status                                Show active project, environment, and key
 
 Navigation:
   project                               Show current project info
+  project ls                            List the org's projects (org key)
   env                                   List every environment: protected/open,
                                         key in workspace or not (✓ = active)
   env use <name>                        Switch active environment
-  env add <api-key> [--url <base-url>]  Add environment credentials
+  env add <api-key> [--url <base-url>]  Add a legacy environment key (deprecated)
   env rm <name>                         Remove environment credentials
   -e -u <env-name> [command]            Switch environment (shorthand), then run command
   locales                               List locales with string counts
@@ -151,6 +156,7 @@ Navigation:
                                         with any key of the project
 
 API keys:
+  apikey ls                             List the project's keys
   apikey rotate [--env <name>]          Rotate the workspace API key
 
 Strings:
@@ -199,6 +205,8 @@ Promote:
                           Preview the pending string diff between two environments
                           (defaults: from = active env, to = default env). Read-only;
                           a human applies it at the dashboard link printed last.
+  promote --to <env> [--from <env>]
+                          Apply the promotion (full-power org key only)
 
 Variants (A/B experiments on a string):
   variants create <key>                            Create an experiment (control 100%)
@@ -227,33 +235,60 @@ MCP:
 
 Flags:
   --json                  Output as JSON (works with any command)
+  --project <id|name>     Run against another project of the org (org key)
   <command> --help        Show help for a command
 
 Environment variables (headless / CI — no 'init' needed):
-  AIRSTRINGS_API_KEY      Scoped API key; overrides the workspace credential.
-                          Project and default environment are resolved from the
-                          key automatically.
+  AIRSTRINGS_API_KEY      Project key; overrides the workspace credential. For
+                          CI, create a project key in the dashboard.
+  AIRSTRINGS_ORG_API_KEY  Org key; wins over every other key. Never use it in CI
   AIRSTRINGS_PROJECT_ID   Skip project resolution (one fewer API call)
   AIRSTRINGS_ENV_ID       Skip environment resolution
   AIRSTRINGS_BASE_URL     API base URL (default https://api.airstrings.com)
+  AIRSTRINGS_NO_BROWSER   Print the login URL without opening a browser
   NO_COLOR                Disable colored output
 
 Exit codes:
   0 ok   1 error   2 usage   3 auth / missing key   4 not-found   5 network
-  6 rate-limited   7 environment protected   8 plan limit
+  6 rate-limited   7 environment protected   8 plan limit   9 login pending
+  Exit 9 prints {"status":"pending","verification_uri_complete",...}: open the
+  URL, approve, then re-run the same command.
   With --json, errors are {"error":{"message","next_step","exit_code"}} on stderr.
 
 `)
 }
 
 var commandHelp = map[string]string{
-	"init": `Usage: airstrings init <api-key> [--url <base-url>] [--purge]
+	"init": `Usage: airstrings init [<api-key>] [--name <name>] [--url <base-url>] [--purge]
 
-Initialize workspace and authenticate.
+Bind this folder to a project and write .airstrings/config.json.
+
+  No key        Uses AIRSTRINGS_ORG_API_KEY, AIRSTRINGS_API_KEY or the stored
+                login; with none, runs airstrings login first. An org key
+                creates a project named after the folder (--project <id> to
+                bind an existing one). Never reuses a project by name.
+  Project key   Binds to the key's project. In an existing workspace it
+                switches to the key in place, keeping local strings.
+
+Without a terminal the login prints a URL and exits 9: open it, approve,
+then re-run the same command.
 
 Flags:
+  --name <name>             Name for the created project
   --url, --base-url <url>   API base URL (default https://api.airstrings.com)
+  --no-browser              Print the login URL without opening a browser
   --purge                   Re-init and remove local strings
+`,
+	"login": `Usage: airstrings login [--no-browser] [--url <base-url>]
+
+Log in through the browser. An owner of the organization approves the request,
+then an org key is stored in ~/.config/airstrings/credentials.json (0600).
+Logging in again revokes the previous key. Without a terminal it prints the
+URL and exits 9; re-run after approving.
+`,
+	"logout": `Usage: airstrings logout [--url <base-url>]
+
+Revoke the stored org key and remove it from credentials.json.
 `,
 	"status": `Usage: airstrings status
 
@@ -273,16 +308,16 @@ Every value printed is public, not a secret: safe to show, commit and embed.
 Flags:
   --env <name>            Environment name or ID (default: production)
 `,
-	"project": `Usage: airstrings project
+	"project": `Usage: airstrings project [ls]
 
-Show current project info.
+Show current project info. 'project ls' lists the org's projects (org key).
 `,
 	"env": `Usage: airstrings env [use|add|rm|create] [options]
 
   env                                   List every environment: protected/open,
                                         key in workspace or not (✓ = active)
   env use <name>                        Switch active environment
-  env add <api-key> [--url <base-url>]  Add environment credentials
+  env add <api-key> [--url <base-url>]  Add a legacy environment key (deprecated)
   env rm <name>                         Remove environment credentials
   env create <name>                     Create a new environment
   -e -u <env-name> [command]            Switch environment (shorthand), then run command
@@ -290,9 +325,11 @@ Show current project info.
 Flags:
   --url, --base-url <url>   API base URL (env add)
 `,
-	"apikey": `Usage: airstrings apikey rotate [--env <name>]
+	"apikey": `Usage: airstrings apikey <ls|rotate> [--env <name>]
 
-Rotate the workspace API key.
+  apikey ls       List the project's keys (scope, permission, prefix)
+  apikey rotate   Rotate the workspace key. A project key is revoked and
+                  replaced in one call
 
 Flags:
   --env <name>              Rotate the key for a specific environment
@@ -375,14 +412,15 @@ List locales with string counts.
   import status <id>      Check import status
 `,
 	"promote": `Usage: airstrings promote preview [--from <env-name>] [--to <env-name>]
+       airstrings promote --to <env-name> [--from <env-name>]
 
-Preview the pending string diff between two environments. Read-only — no writes.
-Ends with the dashboard link where a human applies the promotion.
+'preview' shows the pending string diff between two environments, read-only,
+ending with the dashboard link where a human applies the promotion.
+Without 'preview' the promotion is applied: needs a full-power org key;
+other keys exit 7 with the dashboard link.
 
   --from <env-name>   Source environment (default: active env)
   --to <env-name>     Target environment (default: default env)
-
-Only 'preview' is available.
 `,
 	"variants": `Usage: airstrings variants <create|set|allocation|start|stop|rm|rm-variant|status|promote> <key> [args]
 

@@ -170,3 +170,31 @@ func TestLogoutRevokeFailureStillDeletesAndWarns(t *testing.T) {
 		t.Errorf("key not deleted: %v", keys)
 	}
 }
+
+func TestUsageListsLoginAndOrgKeyEnv(t *testing.T) {
+	code, stdout, _ := runCLI(t, "help")
+	if code != 0 {
+		t.Fatalf("exit = %d", code)
+	}
+	for _, w := range []string{"login", "logout", "project ls", "apikey ls", "promote --to", "--project <id|name>", "AIRSTRINGS_ORG_API_KEY", "AIRSTRINGS_NO_BROWSER", "9 login pending"} {
+		if !strings.Contains(stdout, w) {
+			t.Errorf("usage missing %q", w)
+		}
+	}
+	if strings.Contains(stdout, "\n  init <api-key>") {
+		t.Error("usage still says init requires a key")
+	}
+}
+
+func TestInitHelpNoKeyRequired(t *testing.T) {
+	_, stdout, _ := runCLI(t, "init", "--help")
+	for _, w := range []string{"Usage: airstrings init [<api-key>]", "airstrings login", "exits 9"} {
+		if !strings.Contains(stdout, w) {
+			t.Errorf("init help missing %q\n%s", w, stdout)
+		}
+	}
+	_, stdout, _ = runCLI(t, "login", "--help")
+	if !strings.Contains(stdout, "Usage: airstrings login") {
+		t.Errorf("login help = %s", stdout)
+	}
+}

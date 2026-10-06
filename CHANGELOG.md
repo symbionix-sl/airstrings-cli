@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.18.0] - 2026-10-06
+
+### Added
+
+- `airstrings login` / `logout`: browser login approved by an org owner; stores an org key (`as_org_…`) in `~/.config/airstrings/credentials.json` (0600). Logging in again revokes the previous key. Without a terminal the command exits 9 and prints `{status:"pending", verification_uri_complete, user_code, expires_in, next_step}`; re-run after approving.
+- `airstrings init` without a key logs in, creates a project named after the folder (`--name`, or `--project <id>` to bind an existing one) and writes the workspace. A name collision exits 2 naming the existing project.
+- Org and project keys (`as_org_…`, `as_proj_…`). One project key covers every environment. `init <project-key>` in an existing workspace switches keys in place and keeps local strings.
+- `AIRSTRINGS_ORG_API_KEY` (wins over every other key), global `--project <id|name>`, `project ls`, `apikey ls`, `promote --to <env>` (full-power org key), `AIRSTRINGS_NO_BROWSER`.
+- `status` reports `key_type`, `key_source` and `full_power`.
+- MCP: `airstrings_login`; `airstrings_init` takes an optional key, `name` and `project`. The MCP server honors the env keys and the stored login.
+
+### Changed
+
+- Guidance points at the project-key page and `airstrings init <key>`; `env add` is deprecated (legacy environment keys only).
+- `apikey rotate` with a project key revokes and replaces it in one call.
+- A legacy key now picks its own environment as active, not the project default (a staging-only key no longer 404s on production).
+
 ## [0.17.1] - 2026-10-06
 
 ### Fixed
