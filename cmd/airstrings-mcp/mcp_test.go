@@ -118,6 +118,7 @@ func TestMCP_ToolsList(t *testing.T) {
 
 	expectedTools := map[string]bool{
 		"airstrings_init":            false,
+		"airstrings_login":           false,
 		"airstrings_strings_set":     false,
 		"airstrings_strings_rm":      false,
 		"airstrings_strings_ls":      false,
@@ -1060,5 +1061,138 @@ func TestMCP_StatusHonorsOrgKeyEnv(t *testing.T) {
 		if k != "as_org_env" {
 			t.Errorf("request sent key %q, want as_org_env", k)
 		}
+	}
+}
+
+const mcpStartReply = `{"device_code":"dc","user_code":"BCDF-GHJK","verification_uri":"https://app/cli/approve","verification_uri_complete":"https://app/cli/approve?code=BCDF-GHJK","interval":5,"expires_in":600}`
+
+func mcpLoginServer(t *testing.T, approved bool) *httptest.Server {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/cli/auth/start":
+			w.Write([]byte(mcpStartReply))
+		case "/v1/cli/auth/token":
+			if !approved {
+				w.WriteHeader(http.StatusBadRequest)
+				w.Write([]byte(`{"error":{"code":"authorization_pending","message":"pending"}}`))
+				return
+			}
+			w.Write([]byte(`{"api_key":"as_org_new","key_id":"ok_1","org_id":"org_1","org_name":"Acme","full_power":true}`))
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func TestMCP_ToolsListHasLogin(t *testing.T) {
+	resp := mcpExchange(t, &MCPServer{}, "tools/list", 2, map[string]any{})
+	raw, _ := json.Marshal(resp.Result)
+	var list ToolsListResult
+	json.Unmarshal(raw, &list)
+	found := false
+	for _, tool := range list.Tools {
+		found = found || tool.Name == "airstrings_login"
+		if tool.Name == "airstrings_init" && len(tool.InputSchema.Required) != 0 {
+			t.Errorf("airstrings_init requires %v, want none", tool.InputSchema.Required)
+		}
+	}
+	if !found {
+		t.Error("airstrings_login missing from tools/list")
+	}
+}
+
+func TestMCP_LoginReturnsPendingThenApproved(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	srv := mcpLoginServer(t, true)
+	server := &MCPServer{}
+	first := callTool(t, server, 1, "airstrings_login", map[string]any{"base_url": srv.URL})
+	if first.IsError || !strings.Contains(first.Content[0].Text, `"verification_uri_complete":"https://app/cli/approve?code=BCDF-GHJK"`) {
+		t.Fatalf("first call = %+v", first)
+	}
+	second := callTool(t, server, 2, "airstrings_login", map[string]any{"base_url": srv.URL})
+	if second.IsError || !strings.Contains(second.Content[0].Text, `"status":"logged_in"`) || strings.Contains(second.Content[0].Text, "as_org_new") {
+		t.Fatalf("second call = %+v", second)
+	}
+	creds, _ := workspace.LoadCreds()
+	if k := creds.OrgKey(srv.URL); k == nil || k.APIKey != "as_org_new" || creds.Pending != nil {
+		t.Errorf("stored creds = %+v", creds)
+	}
+}
+
+func TestMCP_InitWithoutKeyReturnsPending(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	srv := mcpLoginServer(t, false)
+	dir := t.TempDir()
+	res := callTool(t, &MCPServer{}, 1, "airstrings_init", map[string]any{"base_url": srv.URL, "dir": dir})
+	if res.IsError || !strings.Contains(res.Content[0].Text, "verification_uri_complete") || !strings.Contains(res.Content[0].Text, `"status":"pending"`) {
+		t.Fatalf("init = %+v", res)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".airstrings")); err == nil {
+		t.Error("workspace created before login was approved")
+	}
+}
+
+func TestMCP_InitWithOrgKeyEnvCreatesProject(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == "POST" && r.URL.Path == "/v1/projects":
+			w.WriteHeader(http.StatusCreated)
+			w.Write([]byte(`{"id":"proj_new","name":"app"}`))
+		case strings.HasSuffix(r.URL.Path, "/sdk-config"):
+			w.Write([]byte(`{"org_id":"org_1","project_id":"proj_new","environments":[` +
+				`{"id":"env_p","name":"production","is_default":true,"is_sealed":true,"public_keys":[]},` +
+				`{"id":"env_s","name":"staging","is_default":false,"is_sealed":false,"public_keys":[]}]}`))
+		case strings.HasSuffix(r.URL.Path, "/sections"):
+			w.Write([]byte(`{"data":[]}`))
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	t.Setenv("AIRSTRINGS_ORG_API_KEY", "as_org_env")
+	t.Setenv("AIRSTRINGS_BASE_URL", srv.URL)
+	dir := filepath.Join(t.TempDir(), "app")
+	os.Mkdir(dir, 0700)
+	res := callTool(t, &MCPServer{}, 1, "airstrings_init", map[string]any{"dir": dir})
+	if res.IsError || !strings.Contains(res.Content[0].Text, `"created":true`) {
+		t.Fatalf("init = %+v", res)
+	}
+	cfg, err := workspace.LoadConfig(filepath.Join(dir, ".airstrings"))
+	if err != nil || cfg.ProjectID != "proj_new" || cfg.ActiveEnv != "env_s" || cfg.Credentials[0].APIKey != "" {
+		t.Errorf("config = %+v, err = %v", cfg, err)
+	}
+}
+
+func TestMCP_InitLegacyKeyFilesOnlyBoundEnv(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/projects":
+			w.Write([]byte(`{"id":"p","name":"Legacy"}`))
+		case "/v1/projects/p/environments":
+			w.Write([]byte(`{"data":[{"id":"env_p","name":"production","is_default":true},{"id":"env_s","name":"staging"}]}`))
+		case "/v1/projects/p/environments/env_s":
+			w.Write([]byte(`{"id":"env_s","name":"staging","organization_id":"org_1"}`))
+		case "/v1/projects/p/environments/env_p":
+			w.WriteHeader(http.StatusForbidden)
+			w.Write([]byte(`{"error":{"code":"forbidden","message":"no"}}`))
+		case "/v1/projects/p/environments/env_s/sections":
+			w.Write([]byte(`{"data":[]}`))
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	dir := t.TempDir()
+	res := callTool(t, &MCPServer{}, 1, "airstrings_init", map[string]any{"api_key": strings.Repeat("a", 64), "base_url": srv.URL, "dir": dir})
+	if res.IsError {
+		t.Fatalf("init = %+v", res)
+	}
+	cfg, _ := workspace.LoadConfig(filepath.Join(dir, ".airstrings"))
+	if len(cfg.Credentials) != 1 || cfg.Credentials[0].EnvID != "env_s" || cfg.ActiveEnv != "env_s" {
+		t.Errorf("credentials = %+v", cfg.Credentials)
 	}
 }

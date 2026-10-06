@@ -819,8 +819,8 @@ func login(baseURL string, noBrowser bool) *workspace.OrgKey {
 	}
 	if fresh {
 		fmt.Fprintf(os.Stderr, "To log in, open:\n  %s\nand check the code %s. An owner of your AirStrings organization must approve.\n", p.VerificationURIComplete, p.UserCode)
-		if !noBrowser && os.Getenv("AIRSTRINGS_NO_BROWSER") == "" {
-			openBrowser(p.VerificationURIComplete)
+		if !noBrowser {
+			workspace.OpenBrowser(p.VerificationURIComplete)
 		}
 	}
 	interactive := isInteractive()
@@ -866,22 +866,6 @@ func failPending(p *workspace.PendingLogin) {
 func isInteractive() bool {
 	info, err := os.Stdout.Stat()
 	return stdinIsTTY() && err == nil && info.Mode()&os.ModeCharDevice != 0 && !output.JSONMode && os.Getenv("CI") == ""
-}
-
-func openBrowser(url string) {
-	if client.ValidateBaseURL(url) != nil {
-		return
-	}
-	var cmd *exec.Cmd
-	switch runtime.GOOS {
-	case "darwin":
-		cmd = exec.Command("open", url)
-	case "windows":
-		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", url)
-	default:
-		cmd = exec.Command("xdg-open", url)
-	}
-	cmd.Start()
 }
 
 func handleLogout(args []string) {

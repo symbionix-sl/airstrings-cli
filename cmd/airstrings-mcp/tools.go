@@ -2,10 +2,12 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/symbionix-sl/airstrings-cli/internal/client"
 	"github.com/symbionix-sl/airstrings-cli/internal/guide"
@@ -51,15 +53,26 @@ var stringsLsSchema = InputSchema{
 var toolDefs = []ToolDef{
 	{
 		Name:        "airstrings_init",
-		Description: "Initialize an AirStrings workspace in the current directory. Requires an API key to authenticate and set up the project.",
+		Description: "Initialize an AirStrings workspace in the current directory. Without an API key it uses AIRSTRINGS_ORG_API_KEY, AIRSTRINGS_API_KEY or the stored login; with none it starts a login and returns status \"pending\" with a URL for the user to approve, then call it again. An org key creates a project named after the folder unless project is given.",
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]Property{
-				"api_key":  {Type: "string", Description: "AirStrings API key for authentication."},
+				"api_key":  {Type: "string", Description: "Project key (as_proj_…), org key (as_org_…) or legacy environment key. Optional."},
 				"base_url": {Type: "string", Description: "API base URL. Defaults to https://api.airstrings.com if omitted."},
 				"dir":      {Type: "string", Description: "Directory to initialize. Uses current working directory if omitted."},
+				"name":     {Type: "string", Description: "Name for a project created with an org key. Defaults to the folder or repository name."},
+				"project":  {Type: "string", Description: "Existing project ID or name to bind instead of creating one (org key)."},
 			},
-			Required: []string{"api_key"},
+		},
+	},
+	{
+		Name:        "airstrings_login",
+		Description: "Log in to AirStrings and store an org key. The first call returns status \"pending\" with verification_uri_complete: ask the user to open it (an owner of the organization must approve), then call again to finish.",
+		InputSchema: InputSchema{
+			Type: "object",
+			Properties: map[string]Property{
+				"base_url": {Type: "string", Description: "API base URL. Defaults to https://api.airstrings.com if omitted."},
+			},
 		},
 	},
 	{
@@ -202,6 +215,7 @@ type toolHandler func(args json.RawMessage) *CallToolResult
 
 var toolHandlers = map[string]toolHandler{
 	"airstrings_init":            handleToolInit,
+	"airstrings_login":           handleToolLogin,
 	"airstrings_strings_set":     handleToolStringsSet,
 	"airstrings_strings_rm":      handleToolStringsRm,
 	"airstrings_strings_ls":      handleToolStringsLs,
@@ -224,80 +238,98 @@ func handleToolInit(raw json.RawMessage) *CallToolResult {
 		APIKey  string `json:"api_key"`
 		BaseURL string `json:"base_url"`
 		Dir     string `json:"dir"`
+		Name    string `json:"name"`
+		Project string `json:"project"`
 	}
 	json.Unmarshal(raw, &args)
-
-	if args.APIKey == "" {
-		return errorResult("api_key is required")
-	}
 
 	dir := args.Dir
 	if dir == "" {
 		dir, _ = os.Getwd()
 	}
 
-	// Check if workspace already exists
 	wsDir := filepath.Join(dir, ".airstrings")
 	if _, err := os.Stat(filepath.Join(wsDir, "config.json")); err == nil {
 		return errorResult(fmt.Sprintf("workspace already exists at %s", wsDir))
 	}
 
-	// Validate key and discover project/environments
-	c := client.New(args.APIKey, args.BaseURL, "", "")
-	proj, err := c.GetProject()
+	if args.BaseURL == "" {
+		args.BaseURL = os.Getenv("AIRSTRINGS_BASE_URL")
+	}
+	opts := workspace.SetupOptions{APIKey: args.APIKey, BaseURL: args.BaseURL, Name: args.Name, Project: args.Project}
+	res, err := workspace.Setup(dir, opts)
+	if errors.Is(err, workspace.ErrNoKey) {
+		if _, pending := login(args.BaseURL); pending != nil {
+			return pending
+		}
+		res, err = workspace.Setup(dir, opts)
+	}
 	if err != nil {
-		return errorResult(fmt.Sprintf("invalid API key: %s", err))
-	}
-
-	c2 := client.New(args.APIKey, args.BaseURL, proj.ID, "")
-	envs, err := c2.ListEnvironments()
-	if err != nil {
-		return errorResult(fmt.Sprintf("list environments: %s", err))
-	}
-
-	// Build workspace config with credentials
-	wsCfg := workspace.WorkspaceConfig{
-		ProjectID:   proj.ID,
-		ProjectName: proj.Name,
-	}
-
-	var activeEnvName string
-	for _, env := range envs {
-		cred := workspace.Credential{
-			APIKey:  args.APIKey,
-			BaseURL: args.BaseURL,
-			EnvID:   env.ID,
-			EnvName: env.Name,
-		}
-		wsCfg.AddOrUpdate(cred)
-		if env.IsDefault || wsCfg.ActiveEnv == "" {
-			wsCfg.ActiveEnv = env.ID
-			activeEnvName = env.Name
-		}
-	}
-
-	if err := workspace.Init(dir, wsCfg); err != nil {
-		return errorResult(fmt.Sprintf("init workspace: %s", err))
-	}
-
-	// Create section dirs for remote sections
-	c3 := client.New(args.APIKey, args.BaseURL, proj.ID, wsCfg.ActiveEnv)
-	sections, err := c3.ListSections()
-	sectionCount := 0
-	if err == nil {
-		for _, sec := range sections.Data {
-			workspace.CreateSectionDir(wsDir, sec.Name)
-		}
-		sectionCount = len(sections.Data)
+		return setupError(err)
 	}
 
 	result, _ := json.Marshal(map[string]any{
-		"project":      proj.Name,
-		"environment":  activeEnvName,
-		"environments": len(envs),
-		"sections":     sectionCount,
+		"project_id":   res.ProjectID,
+		"project":      res.ProjectName,
+		"created":      res.Created,
+		"environment":  res.ActiveEnvName,
+		"environments": res.Environments,
+		"sections":     res.Sections,
 	})
 	return textResult(string(result))
+}
+
+func setupError(err error) *CallToolResult {
+	var usage *workspace.UsageError
+	if errors.As(err, &usage) {
+		return errorResult(usage.Message + "\nNext step: " + usage.NextStep)
+	}
+	return errorResult(err.Error())
+}
+
+func handleToolLogin(raw json.RawMessage) *CallToolResult {
+	var args struct {
+		BaseURL string `json:"base_url"`
+	}
+	json.Unmarshal(raw, &args)
+	if args.BaseURL == "" {
+		args.BaseURL = os.Getenv("AIRSTRINGS_BASE_URL")
+	}
+	k, pending := login(args.BaseURL)
+	if pending != nil {
+		return pending
+	}
+	out, _ := json.Marshal(map[string]any{"status": "logged_in", "org_id": k.OrgID, "org_name": k.OrgName, "full_power": k.FullPower, "base_url": k.BaseURL})
+	return textResult(string(out))
+}
+
+func login(baseURL string) (*workspace.OrgKey, *CallToolResult) {
+	if baseURL == "" {
+		baseURL = client.DefaultBaseURL
+	}
+	p, fresh, err := workspace.StartLogin(baseURL, client.ClientName(version))
+	if err != nil {
+		return nil, errorResult(fmt.Sprintf("start login: %s", err))
+	}
+	if !fresh {
+		k, err := workspace.PollLogin(p, 0, nil)
+		if err == nil {
+			return k, nil
+		}
+		if !errors.Is(err, workspace.ErrLoginPending) {
+			return nil, errorResult(fmt.Sprintf("login: %s", err))
+		}
+	} else {
+		workspace.OpenBrowser(p.VerificationURIComplete)
+	}
+	out, _ := json.Marshal(map[string]any{
+		"status":                    "pending",
+		"verification_uri_complete": p.VerificationURIComplete,
+		"user_code":                 p.UserCode,
+		"expires_in":                int(time.Until(p.ExpiresAt).Seconds()),
+		"next_step":                 workspace.PendingNextStep,
+	})
+	return nil, textResult(string(out))
 }
 
 func resolvePushClient(wsDir string) (*client.Client, *CallToolResult) {

@@ -2,6 +2,9 @@ package workspace
 
 import (
 	"errors"
+	"os"
+	"os/exec"
+	"runtime"
 	"time"
 
 	"github.com/symbionix-sl/airstrings-cli/internal/client"
@@ -100,4 +103,20 @@ func errorCode(err error) string {
 		return apiErr.Body.Error.Code
 	}
 	return ""
+}
+
+func OpenBrowser(url string) {
+	if os.Getenv("AIRSTRINGS_NO_BROWSER") != "" || client.ValidateBaseURL(url) != nil {
+		return
+	}
+	var cmd *exec.Cmd
+	switch runtime.GOOS {
+	case "darwin":
+		cmd = exec.Command("open", url)
+	case "windows":
+		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", url)
+	default:
+		cmd = exec.Command("xdg-open", url)
+	}
+	cmd.Start()
 }
