@@ -49,7 +49,7 @@ func SDKEnvironment(e client.SDKEnvironment) map[string]any {
 
 // Inspect derives key scope, per-environment protection and the state hint.
 // Best-effort: a nil client or failed call degrades to "unknown".
-func Inspect(c *client.Client, apiKey string, hasKey func(envID string) bool) Details {
+func Inspect(c *client.Client, apiKey string, hasKey func(envID string) bool, fullPower bool) Details {
 	d := Details{Protection: "unknown", KeyScope: "unknown"}
 	if c == nil {
 		return d
@@ -91,6 +91,9 @@ func Inspect(c *client.Client, apiKey string, hasKey func(envID string) bool) De
 		if st := OpenEnv(envs, def.ID); st != nil {
 			h = NeedStagingKey(def.Name, st.Name, APIKeysURL(dash, c.ProjectID()), promote)
 		}
+	}
+	if fullPower && def.IsSealed {
+		h.NextStep = "Publish to staging, then promote: `airstrings promote --to " + ShellArg(def.Name) + "`"
 	}
 	d.Hint = &h
 	return d

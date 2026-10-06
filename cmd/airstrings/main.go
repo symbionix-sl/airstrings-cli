@@ -667,7 +667,7 @@ func statusClient() *client.Client {
 }
 
 func statusInfo(wsCfg *workspace.WorkspaceConfig, auth workspace.Auth) guide.Details {
-	return guide.Inspect(statusClient(), auth.Key, auth.HasKey(wsCfg))
+	return guide.Inspect(statusClient(), auth.Key, auth.HasKey(wsCfg), auth.FullPower() == true)
 }
 
 func protectionLine(d guide.Details) string {

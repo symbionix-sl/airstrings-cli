@@ -24,14 +24,22 @@ func inspectServer(t *testing.T) *httptest.Server {
 func TestInspect_MatchesLongPrefix(t *testing.T) {
 	srv := inspectServer(t)
 	key := "as_proj_aaaa2222" + strings.Repeat("f", 56)
-	if d := Inspect(client.New(key, srv.URL, "proj", "env_s"), key, nil); d.KeyScope != "write" {
+	if d := Inspect(client.New(key, srv.URL, "proj", "env_s"), key, nil, false); d.KeyScope != "write" {
 		t.Errorf("KeyScope = %q, want write", d.KeyScope)
 	}
 }
 
 func TestInspect_OrgKeyIsWrite(t *testing.T) {
 	srv := inspectServer(t)
-	if d := Inspect(client.New("as_org_k", srv.URL, "proj", "env_s"), "as_org_k", nil); d.KeyScope != "write" {
+	if d := Inspect(client.New("as_org_k", srv.URL, "proj", "env_s"), "as_org_k", nil, false); d.KeyScope != "write" {
 		t.Errorf("KeyScope = %q, want write", d.KeyScope)
+	}
+}
+
+func TestInspect_FullPowerOrgKeyHintPromotes(t *testing.T) {
+	srv := inspectServer(t)
+	d := Inspect(client.New("as_org_k", srv.URL, "proj", "env_s"), "as_org_k", nil, true)
+	if d.Hint == nil || d.Hint.NextStep != "Publish to staging, then promote: `airstrings promote --to production`" {
+		t.Errorf("hint = %+v", d.Hint)
 	}
 }

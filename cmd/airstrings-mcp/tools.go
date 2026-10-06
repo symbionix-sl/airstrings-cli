@@ -953,7 +953,7 @@ func handleToolStatus(json.RawMessage) *CallToolResult {
 		return errorResult(err.Error())
 	}
 	auth, _ := workspace.ResolveAuth(wsCfg)
-	d := guide.Inspect(c, auth.Key, auth.HasKey(wsCfg))
+	d := guide.Inspect(c, auth.Key, auth.HasKey(wsCfg), auth.FullPower() == true)
 	out, _ := json.Marshal(map[string]any{
 		"project_id":        wsCfg.ProjectID,
 		"project_name":      wsCfg.ProjectName,
