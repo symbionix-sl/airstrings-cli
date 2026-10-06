@@ -65,7 +65,7 @@ Staging is the active environment after `init`. Production is **protected** by d
 | Project key | `as_proj_` | every environment of one project | dashboard → API keys |
 | Legacy environment key | 64 hex | one environment | created before 0.18 |
 
-Precedence: `AIRSTRINGS_ORG_API_KEY` > `AIRSTRINGS_API_KEY` > workspace key > stored login. In CI, put a project key in `AIRSTRINGS_API_KEY` — never an org key.
+Precedence: `AIRSTRINGS_ORG_API_KEY` > `AIRSTRINGS_API_KEY` > workspace key > stored login. In CI prefer a project key in `AIRSTRINGS_API_KEY`. For CI across several projects use `AIRSTRINGS_ORG_API_KEY` with a gated (non-full-power) org key created in the dashboard.
 
 ```bash
 airstrings login                    # log in again (revokes the previous org key)

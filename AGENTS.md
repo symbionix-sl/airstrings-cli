@@ -57,8 +57,9 @@ place and keeps local strings.
 **Environment variables (headless / CI / ephemeral agent):** skip `init`.
 
 ```
-AIRSTRINGS_ORG_API_KEY  org key; wins over every other key. Never use it in CI
-AIRSTRINGS_API_KEY      project key (CI: create one in the dashboard)
+AIRSTRINGS_ORG_API_KEY  org key; wins over every other key. CI across several
+                        projects: a gated (non-full-power) org key from the dashboard
+AIRSTRINGS_API_KEY      project key (preferred in CI: create one in the dashboard)
 AIRSTRINGS_PROJECT_ID   optional — skip project lookup (one fewer API call)
 AIRSTRINGS_ENV_ID       optional — skip environment lookup
 AIRSTRINGS_BASE_URL     optional — default https://api.airstrings.com

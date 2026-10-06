@@ -241,7 +241,9 @@ Flags:
 Environment variables (headless / CI — no 'init' needed):
   AIRSTRINGS_API_KEY      Project key; overrides the workspace credential. For
                           CI, create a project key in the dashboard.
-  AIRSTRINGS_ORG_API_KEY  Org key; wins over every other key. Never use it in CI
+  AIRSTRINGS_ORG_API_KEY  Org key; wins over every other key. In CI prefer a
+                          project key; for CI across several projects use a
+                          gated (non-full-power) org key from the dashboard
   AIRSTRINGS_PROJECT_ID   Skip project resolution (one fewer API call)
   AIRSTRINGS_ENV_ID       Skip environment resolution
   AIRSTRINGS_BASE_URL     API base URL (default https://api.airstrings.com)
