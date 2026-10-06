@@ -138,10 +138,6 @@ func findProject(auth Auth, want string) (string, error) {
 		}
 		return "", &UsageError{"this org key covers every project in the organization; choose one", "Run: airstrings project ls, then pass --project <id> (or run airstrings init in the app's folder)"}
 	}
-	for _, p := range projects {
-		if p.ID == want || strings.EqualFold(p.Name, want) {
-			return p.ID, nil
-		}
-	}
-	return "", &UsageError{fmt.Sprintf("project %q not found", want), "Run: airstrings project ls"}
+	p, err := matchProject(projects, want)
+	return p.ID, err
 }

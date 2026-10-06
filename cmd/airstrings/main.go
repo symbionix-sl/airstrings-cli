@@ -2364,13 +2364,17 @@ func handleSDKConfig(args []string) {
 		return
 	}
 
+	fmt.Printf("%s\n\n", guide.PublicNotice)
+	printSDKConfig(cfg, *env)
+}
+
+func printSDKConfig(cfg *client.SDKConfig, env client.SDKEnvironment) {
 	keys := make([]string, len(env.PublicKeys))
 	for i, k := range env.PublicKeys {
 		keys[i] = k.PublicKey
 	}
 	snippets := guide.Snippets(cfg.OrgID, cfg.ProjectID, env.ID, keys)
 
-	fmt.Printf("%s\n\n", guide.PublicNotice)
 	fmt.Printf("Organization:  %s\n", cfg.OrgID)
 	fmt.Printf("Project:       %s\n", cfg.ProjectID)
 	fmt.Printf("Environment:   %s (%s, %s)\n", env.Name, env.ID, guide.Protection(env.IsSealed))
@@ -2846,33 +2850,55 @@ func describeWorkspace(wsDir string) (projName, envName string) {
 }
 
 func handleInit(args []string) {
-	if len(args) < 1 {
-		output.Fail(output.ExitUsage, "usage: airstrings init <api-key> [--url <base-url>] [--purge]")
-	}
-
-	// Parse --purge flag before passing to parseKeyAndURL
-	var purge bool
-	var filteredArgs []string
-	for _, arg := range args {
-		if arg == "--purge" {
+	var purge, noBrowser bool
+	var apiKey, name string
+	baseURL := os.Getenv("AIRSTRINGS_BASE_URL")
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--purge":
 			purge = true
-		} else {
-			filteredArgs = append(filteredArgs, arg)
+		case "--no-browser":
+			noBrowser = true
+		case "--url", "--base-url", "--name":
+			if i+1 >= len(args) {
+				output.Fail(output.ExitUsage, "%s requires a value", args[i])
+			}
+			i++
+			if args[i-1] == "--name" {
+				name = args[i]
+			} else {
+				baseURL = args[i]
+			}
+		default:
+			if strings.HasPrefix(args[i], "-") || apiKey != "" {
+				output.Fail(output.ExitUsage, "unknown argument: %s", args[i])
+			}
+			apiKey = args[i]
 		}
 	}
-
-	apiKey, baseURL := parseKeyAndURL(filteredArgs)
+	if baseURL != "" {
+		if err := client.ValidateBaseURL(baseURL); err != nil {
+			output.Fail(output.ExitUsage, "%s", err)
+		}
+	}
 
 	cwd, err := os.Getwd()
 	if err != nil {
 		output.Errorf("get working directory: %s", err)
 	}
 
-	// Handle existing workspace
 	wsDir := filepath.Join(cwd, ".airstrings")
 	if _, err := os.Stat(filepath.Join(wsDir, "config.json")); err == nil {
 		if !purge {
 			projName, envName := describeWorkspace(wsDir)
+			if apiKey == "" && name == "" && workspace.ProjectFlag == "" {
+				if output.JSONMode {
+					output.JSON(map[string]any{"project": projName, "environment": envName, "created": false, "already_initialized": true})
+					return
+				}
+				fmt.Printf("Workspace already initialized for %s / %s. Run: airstrings status\n", projName, envName)
+				return
+			}
 			output.Errorf("workspace already initialized for %s / %s\n"+
 				"to add another environment, run:\n"+
 				"  airstrings env add <api-key>\n"+
@@ -2883,49 +2909,55 @@ func handleInit(args []string) {
 		}
 	}
 
-	// Validate key and discover project/environments
-	proj, envs := validateAndDiscover(apiKey, baseURL)
-
-	// Create workspace with credentials
-	wsCfg := workspace.WorkspaceConfig{
-		ProjectID:   proj.ID,
-		ProjectName: proj.Name,
-	}
-	filed, activeEnvName := addCredentials(&wsCfg, apiKey, baseURL, proj.ID, envs)
-
-	c := client.New(apiKey, baseURL, proj.ID, wsCfg.ActiveEnv)
-
-	if err := workspace.Init(cwd, wsCfg); err != nil {
-		output.Errorf("init workspace: %s", err)
-	}
-
-	// Create section dirs for remote sections
-	sections, err := c.ListSections()
-	sectionCount := 0
-	if err == nil && len(sections.Data) > 0 {
-		for _, sec := range sections.Data {
-			workspace.CreateSectionDir(wsDir, sec.Name)
+	opts := workspace.SetupOptions{APIKey: apiKey, BaseURL: baseURL, Name: name, Project: workspace.ProjectFlag}
+	res, err := workspace.Setup(cwd, opts)
+	if errors.Is(err, workspace.ErrNoKey) {
+		loginURL := baseURL
+		if loginURL == "" {
+			loginURL = client.DefaultBaseURL
 		}
-		sectionCount = len(sections.Data)
+		login(loginURL, noBrowser)
+		res, err = workspace.Setup(cwd, opts)
+	}
+	if err != nil {
+		failResolve(err)
 	}
 
+	out := map[string]any{
+		"project_id":   res.ProjectID,
+		"project":      res.ProjectName,
+		"created":      res.Created,
+		"environment":  res.ActiveEnvName,
+		"environments": res.Environments,
+		"sections":     res.Sections,
+	}
+	var prod client.SDKEnvironment
+	if res.SDK != nil {
+		for _, e := range res.SDK.Environments {
+			if e.IsDefault {
+				prod = e
+			}
+		}
+		out["sdk_config"] = guide.SDKConfig(res.SDK, prod)
+	}
 	if output.JSONMode {
-		output.JSON(map[string]any{
-			"project":      proj.Name,
-			"environment":  activeEnvName,
-			"environments": len(filed),
-			"sections":     sectionCount,
-		})
+		output.JSON(out)
 		return
 	}
 
-	output.Success(fmt.Sprintf("Workspace initialized for %s / %s", proj.Name, activeEnvName))
-	if len(filed) > 1 {
-		fmt.Printf("  %d environments available. Use: airstrings env use <name>\n", len(filed))
+	verb := "Workspace initialized for"
+	if res.Created {
+		verb = "Created project and initialized workspace for"
 	}
-	if sectionCount > 0 {
-		fmt.Printf("  Sections: %d\n", sectionCount)
+	output.Success(fmt.Sprintf("%s %s / %s", verb, client.StripControl(res.ProjectName), res.ActiveEnvName))
+	if res.Sections > 0 {
+		fmt.Printf("  Sections: %d\n", res.Sections)
 	}
+	if res.SDK != nil {
+		fmt.Printf("\nSDK setup for %s (embed in your app):\n\n", prod.Name)
+		printSDKConfig(res.SDK, prod)
+	}
+	fmt.Printf("\nNext: airstrings strings set <key> --values '{\"en\":\"...\"}' --push, then airstrings publish\n")
 }
 
 func hasFlag(args []string, flag string) bool {
