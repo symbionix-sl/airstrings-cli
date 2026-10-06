@@ -16,6 +16,22 @@ import (
 
 const defaultBaseURL = "https://api.airstrings.com"
 
+const (
+	OrgKeyPrefix     = "as_org_"
+	ProjectKeyPrefix = "as_proj_"
+)
+
+// KeyType classifies a raw API key as org, project or legacy environment key.
+func KeyType(key string) string {
+	switch {
+	case strings.HasPrefix(key, OrgKeyPrefix):
+		return "org"
+	case strings.HasPrefix(key, ProjectKeyPrefix):
+		return "project"
+	}
+	return "environment"
+}
+
 // Client is the AirStrings API client.
 type Client struct {
 	baseURL    string
@@ -194,7 +210,9 @@ func (c *Client) do(method, path string, query url.Values, body any, result any)
 		return fmt.Errorf("create request: %w", err)
 	}
 
-	req.Header.Set("X-API-Key", c.apiKey)
+	if c.apiKey != "" {
+		req.Header.Set("X-API-Key", c.apiKey)
+	}
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
@@ -275,7 +293,9 @@ func (c *Client) doMultipart(path string, fields map[string]string, fileName str
 		return fmt.Errorf("create request: %w", err)
 	}
 
-	req.Header.Set("X-API-Key", c.apiKey)
+	if c.apiKey != "" {
+		req.Header.Set("X-API-Key", c.apiKey)
+	}
 	req.Header.Set("Content-Type", w.FormDataContentType())
 	req.Header.Set("Accept", "application/json")
 

@@ -90,3 +90,32 @@ func TestAPIErrorExitCodes(t *testing.T) {
 		}
 	}
 }
+
+func TestKeyType(t *testing.T) {
+	cases := map[string]string{
+		"as_org_abc":  "org",
+		"as_proj_abc": "project",
+		"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef": "environment",
+	}
+	for key, want := range cases {
+		if got := KeyType(key); got != want {
+			t.Errorf("KeyType(%q) = %q, want %q", key, got, want)
+		}
+	}
+}
+
+func TestDoOmitsEmptyAPIKeyHeader(t *testing.T) {
+	var present bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, present = r.Header["X-Api-Key"]
+		w.Write([]byte(`{}`))
+	}))
+	defer srv.Close()
+
+	if _, err := New("", srv.URL, "", "").ListProjects(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if present {
+		t.Error("X-API-Key header sent with an empty key")
+	}
+}

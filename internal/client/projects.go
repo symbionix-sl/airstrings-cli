@@ -20,6 +20,31 @@ func (c *Client) GetProject() (*Project, error) {
 	return &p, err
 }
 
+// ListProjects returns the org's projects for an org key, or the bound project otherwise.
+func (c *Client) ListProjects() ([]Project, error) {
+	var resp struct {
+		Project
+		Data []Project `json:"data"`
+	}
+	if err := c.do("GET", "/v1/projects", nil, nil, &resp); err != nil {
+		return nil, err
+	}
+	if resp.Data == nil {
+		return []Project{resp.Project}, nil
+	}
+	return resp.Data, nil
+}
+
+type CreateProjectRequest struct {
+	Name string `json:"name"`
+}
+
+func (c *Client) CreateProject(req CreateProjectRequest) (*Project, error) {
+	var p Project
+	err := c.do("POST", "/v1/projects", nil, req, &p)
+	return &p, err
+}
+
 type Environment struct {
 	ID             string `json:"id"`
 	ProjectID      string `json:"project_id"`

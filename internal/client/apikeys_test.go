@@ -125,3 +125,55 @@ func TestListAPIKeys_APIError(t *testing.T) {
 		t.Errorf("expected status 401, got %d", apiErr.StatusCode)
 	}
 }
+
+func TestAPIKeys_TypedKeyUsesProjectPath(t *testing.T) {
+	for _, key := range []string{"as_proj_x", "as_org_x"} {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path != "/v1/projects/proj/api-keys" {
+				t.Errorf("%s: unexpected path: %s", key, r.URL.Path)
+			}
+			w.Write([]byte(`{"data":[{"id":"ak_1","scope":"project","full_power":false,"prefix":"as_proj_12345678"},{"id":"ak_2","scope":"environment","env_id":"env_s","prefix":"12345678"}]}`))
+		}))
+		list, err := New(key, srv.URL, "proj", "env").ListAPIKeys()
+		srv.Close()
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if list.Data[0].Scope != "project" || list.Data[1].EnvID == nil || *list.Data[1].EnvID != "env_s" {
+			t.Errorf("unexpected keys: %+v", list.Data)
+		}
+	}
+}
+
+func TestAPIKeys_LegacyKeyUsesEnvPath(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/projects/proj/environments/env/api-keys/ak_1" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+
+	if err := New("0123abcd", srv.URL, "proj", "env").RevokeAPIKey("ak_1"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestAPIKeys_RotateProjectKeyUsesRotatePath(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "POST" || r.URL.Path != "/v1/projects/proj/api-keys/rotate" {
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		w.WriteHeader(http.StatusCreated)
+		w.Write([]byte(`{"id":"ak_new","key":"as_proj_new","scope":"project","permission":"write"}`))
+	}))
+	defer srv.Close()
+
+	k, err := New("as_proj_old", srv.URL, "proj", "env").RotateProjectKey()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if k.Key != "as_proj_new" || k.Scope != "project" {
+		t.Errorf("unexpected key: %+v", k)
+	}
+}
