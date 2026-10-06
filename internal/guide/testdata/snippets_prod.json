@@ -1,0 +1,7 @@
+{
+  "android": "val config = AirStringsConfiguration(\n    organizationId = \"org_x\",\n    projectId = \"proj_x\",\n    environmentId = \"env_x\",\n    publicKeys = listOf(\"K1\", \"K2\"),\n)\n\nval airStrings = AirStrings.create(context, config)",
+  "go": "import airstrings \"github.com/symbionix-sl/airstrings-sdk-go\"\n\nclient, err := airstrings.New(airstrings.Config{\n\tOrganizationID: \"org_x\",\n\tProjectID:      \"proj_x\",\n\tEnvironmentID:  \"env_x\",\n\tPublicKeys:     []string{\"K1\", \"K2\"},\n\tLocales:        []string{\"en\"},\n})",
+  "ios": "import AirStrings\n\nlet airStrings = AirStrings(configuration: .init(\n    organizationId: \"org_x\",\n    projectId: \"proj_x\",\n    environmentId: \"env_x\",\n    publicKeys: [\"K1\", \"K2\"]\n))",
+  "react_native": "import { AirStrings } from '@airstrings/react-native'\n\nconst airstrings = new AirStrings({\n  organizationId: 'org_x',\n  projectId: 'proj_x',\n  environmentId: 'env_x',\n  publicKeys: ['K1', 'K2'],\n  locale: 'en',\n})",
+  "web": "import { AirStrings } from '@airstrings/web'\n\nconst airstrings = new AirStrings({\n  organizationId: 'org_x',\n  projectId: 'proj_x',\n  environmentId: 'env_x',\n  publicKeys: ['K1', 'K2'],\n  locale: 'en',\n})"
+}

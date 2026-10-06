@@ -920,7 +920,7 @@ func handleToolSDKConfig(raw json.RawMessage) *CallToolResult {
 	for _, e := range cfg.Environments {
 		names = append(names, e.Name)
 		if (args.Env == "" && e.IsDefault) || (args.Env != "" && (strings.EqualFold(e.Name, args.Env) || e.ID == args.Env)) {
-			out, _ := json.Marshal(guide.SDKConfig(cfg, e))
+			out, _ := json.Marshal(guide.SDKConfig(cfg, e, c.BaseURL()))
 			return textResult(string(out))
 		}
 	}

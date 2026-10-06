@@ -2495,20 +2495,20 @@ func handleSDKConfig(args []string) {
 	}
 
 	if output.JSONMode {
-		output.JSON(guide.SDKConfig(cfg, *env))
+		output.JSON(guide.SDKConfig(cfg, *env, c.BaseURL()))
 		return
 	}
 
 	fmt.Printf("%s\n\n", guide.PublicNotice)
-	printSDKConfig(cfg, *env)
+	printSDKConfig(cfg, *env, c.BaseURL())
 }
 
-func printSDKConfig(cfg *client.SDKConfig, env client.SDKEnvironment) {
+func printSDKConfig(cfg *client.SDKConfig, env client.SDKEnvironment, apiBaseURL string) {
 	keys := make([]string, len(env.PublicKeys))
 	for i, k := range env.PublicKeys {
 		keys[i] = k.PublicKey
 	}
-	snippets := guide.Snippets(cfg.OrgID, cfg.ProjectID, env.ID, keys)
+	snippets := guide.Snippets(cfg.OrgID, cfg.ProjectID, env.ID, keys, apiBaseURL)
 
 	fmt.Printf("Organization:  %s\n", cfg.OrgID)
 	fmt.Printf("Project:       %s\n", cfg.ProjectID)
@@ -3085,7 +3085,7 @@ func handleInit(args []string) {
 				prod = e
 			}
 		}
-		out["sdk_config"] = guide.SDKConfig(res.SDK, prod)
+		out["sdk_config"] = guide.SDKConfig(res.SDK, prod, baseURL)
 	}
 	if output.JSONMode {
 		output.JSON(out)
@@ -3102,7 +3102,7 @@ func handleInit(args []string) {
 	}
 	if res.SDK != nil {
 		fmt.Printf("\nSDK setup for %s (embed in your app):\n\n", prod.Name)
-		printSDKConfig(res.SDK, prod)
+		printSDKConfig(res.SDK, prod, baseURL)
 	}
 	fmt.Printf("\nNext: airstrings strings set <key> en=\"...\" --format text --push, then airstrings publish\n")
 }

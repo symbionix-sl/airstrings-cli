@@ -104,7 +104,7 @@ func Status(activeName string, activeIsDefault bool, defName string, defSealed, 
 const PublicNotice = "All values are public, not secrets: safe to show, commit and embed in app code. They contain no API key."
 
 // SDKConfig is the sdk-config payload shared by the CLI --json output and the MCP tool.
-func SDKConfig(cfg *client.SDKConfig, env client.SDKEnvironment) map[string]any {
+func SDKConfig(cfg *client.SDKConfig, env client.SDKEnvironment, apiBaseURL string) map[string]any {
 	keys := make([]string, len(env.PublicKeys))
 	for i, k := range env.PublicKeys {
 		keys[i] = k.PublicKey
@@ -115,19 +115,26 @@ func SDKConfig(cfg *client.SDKConfig, env client.SDKEnvironment) map[string]any 
 		"project_id":  cfg.ProjectID,
 		"environment": SDKEnvironment(env),
 		"protection":  Protection(env.IsSealed),
-		"snippets":    Snippets(cfg.OrgID, cfg.ProjectID, env.ID, keys),
+		"snippets":    Snippets(cfg.OrgID, cfg.ProjectID, env.ID, keys, apiBaseURL),
 	}
 }
 
 // Snippets returns ready-to-paste SDK initialisers per platform, using the
 // configuration field names from each SDK README.
-func Snippets(orgID, projectID, envID string, publicKeys []string) map[string]string {
+func Snippets(orgID, projectID, envID string, publicKeys []string, apiBaseURL string) map[string]string {
 	quoted := func(q string) string {
 		parts := make([]string, len(publicKeys))
 		for i, k := range publicKeys {
 			parts[i] = q + k + q
 		}
 		return strings.Join(parts, ", ")
+	}
+	var jsBase, iosBase, ktBase, goBase string
+	if apiBaseURL != "" && apiBaseURL != client.DefaultBaseURL {
+		jsBase = fmt.Sprintf("\n  apiBaseURL: '%s',", apiBaseURL)
+		iosBase = fmt.Sprintf(",\n    apiBaseURL: URL(string: %q)!", apiBaseURL)
+		ktBase = fmt.Sprintf("\n    apiBaseURL = %q,", apiBaseURL)
+		goBase = fmt.Sprintf("\n\tAPIBaseURL:     %q,", apiBaseURL)
 	}
 	js := func(pkg string) string {
 		return fmt.Sprintf(`import { AirStrings } from '%s'
@@ -137,8 +144,8 @@ const airstrings = new AirStrings({
   projectId: '%s',
   environmentId: '%s',
   publicKeys: [%s],
-  locale: 'en',
-})`, pkg, orgID, projectID, envID, quoted("'"))
+  locale: 'en',%s
+})`, pkg, orgID, projectID, envID, quoted("'"), jsBase)
 	}
 	return map[string]string{
 		"web":          js("@airstrings/web"),
@@ -149,16 +156,16 @@ let airStrings = AirStrings(configuration: .init(
     organizationId: "%s",
     projectId: "%s",
     environmentId: "%s",
-    publicKeys: [%s]
-))`, orgID, projectID, envID, quoted(`"`)),
+    publicKeys: [%s]%s
+))`, orgID, projectID, envID, quoted(`"`), iosBase),
 		"android": fmt.Sprintf(`val config = AirStringsConfiguration(
     organizationId = "%s",
     projectId = "%s",
     environmentId = "%s",
-    publicKeys = listOf(%s),
+    publicKeys = listOf(%s),%s
 )
 
-val airStrings = AirStrings.create(context, config)`, orgID, projectID, envID, quoted(`"`)),
+val airStrings = AirStrings.create(context, config)`, orgID, projectID, envID, quoted(`"`), ktBase),
 		"go": fmt.Sprintf(`import airstrings "github.com/symbionix-sl/airstrings-sdk-go"
 
 client, err := airstrings.New(airstrings.Config{
@@ -166,8 +173,8 @@ client, err := airstrings.New(airstrings.Config{
 	ProjectID:      "%s",
 	EnvironmentID:  "%s",
 	PublicKeys:     []string{%s},
-	Locales:        []string{"en"},
-})`, orgID, projectID, envID, quoted(`"`)),
+	Locales:        []string{"en"},%s
+})`, orgID, projectID, envID, quoted(`"`), goBase),
 	}
 }
 

@@ -108,6 +108,7 @@ func sameOriginRedirect(req *http.Request, via []*http.Request) error {
 	return nil
 }
 
+func (c *Client) BaseURL() string   { return c.baseURL }
 func (c *Client) ProjectID() string { return c.projectID }
 func (c *Client) EnvID() string     { return c.envID }
 

@@ -478,3 +478,12 @@ func TestInitProjectKeyUpgradesExistingWorkspace(t *testing.T) {
 		t.Error("local strings removed by re-init")
 	}
 }
+
+func TestSDKConfigSnippetsCarryNonDefaultAPIBase(t *testing.T) {
+	srv := guidanceServer(t, true, nil)
+	dir := stagingWorkspace(t, srv.URL)
+	code, stdout, stderr := runSharedInDir(t, dir, nil, "sdk-config", "--env", "staging")
+	if code != 0 || strings.Count(stdout, srv.URL) < 5 || !strings.Contains(stdout, "apiBaseURL: '"+srv.URL+"'") {
+		t.Errorf("exit = %d\nstdout: %s\nstderr: %s", code, stdout, stderr)
+	}
+}
