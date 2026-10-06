@@ -1226,10 +1226,47 @@ func handleEnv(args []string) {
 // --- API key commands ---
 
 func handleAPIKey(args []string) {
-	if len(args) == 0 || args[0] != "rotate" {
-		output.Fail(output.ExitUsage, "usage: airstrings apikey rotate [--env <name>]")
+	switch {
+	case len(args) > 0 && args[0] == "ls":
+		handleAPIKeyLs(args[1:])
+	case len(args) > 0 && args[0] == "rotate":
+		handleAPIKeyRotate(args[1:])
+	default:
+		output.Fail(output.ExitUsage, "usage: airstrings apikey <ls|rotate>")
 	}
-	handleAPIKeyRotate(args[1:])
+}
+
+func handleAPIKeyLs(args []string) {
+	if len(args) > 0 {
+		output.Fail(output.ExitUsage, "usage: airstrings apikey ls")
+	}
+	c := mustClient()
+	list, err := c.ListAPIKeys()
+	if err != nil {
+		failAPI("list API keys", err)
+	}
+	names := map[string]string{}
+	if envs, err := c.ListEnvironments(); err == nil {
+		for _, e := range envs {
+			names[e.ID] = client.StripControl(e.Name)
+		}
+	}
+	rows := make([][]string, len(list.Data))
+	for i, k := range list.Data {
+		scope := k.Scope
+		if k.EnvID != nil {
+			scope += " (" + names[*k.EnvID] + ")"
+		}
+		rows[i] = []string{k.ID, client.StripControl(k.Name), scope, k.Permission, k.Prefix}
+	}
+	output.Auto(list, []string{"ID", "NAME", "SCOPE", "PERMISSION", "PREFIX"}, rows)
+}
+
+func maskKey(key string) string {
+	if len(key) < 20 {
+		return "****"
+	}
+	return key[:12] + "..." + key[len(key)-4:]
 }
 
 func handleAPIKeyRotate(args []string) {
@@ -1269,6 +1306,11 @@ func handleAPIKeyRotate(args []string) {
 		}
 	}
 
+	if cred.APIKey == "" {
+		output.FailNext(output.ExitUsage, "nothing to rotate: this workspace uses your login key, not a stored project key",
+			fmt.Sprintf("For CI, create a project key at %s/projects/%s/api-keys and set AIRSTRINGS_API_KEY", client.DashboardBase(cred.BaseURL), wsCfg.ProjectID))
+	}
+
 	result, err := workspace.RotateKey(wsDir, wsCfg, cred)
 	if err != nil {
 		failAPI("rotate key", err)
@@ -1284,9 +1326,10 @@ func handleAPIKeyRotate(args []string) {
 		return
 	}
 
-	key := cred.APIKey
-	masked := key[:8] + "..." + key[len(key)-4:]
-	if result.Revoked {
+	masked := maskKey(cred.APIKey)
+	if result.OldKeyID == "" {
+		output.Success(fmt.Sprintf("Rotated project key — new key %s (old key revoked)", masked))
+	} else if result.Revoked {
 		output.Success(fmt.Sprintf("Rotated API key for %s — new key %s (old key %s revoked)", cred.EnvName, masked, result.OldKeyID))
 	} else {
 		output.Success(fmt.Sprintf("Rotated API key for %s — new key %s", cred.EnvName, masked))

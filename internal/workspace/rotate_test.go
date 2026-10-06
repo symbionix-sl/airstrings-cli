@@ -270,3 +270,42 @@ func TestRotateKey_OldKeyRevokeFails(t *testing.T) {
 		t.Errorf("expected config to hold new key, got %q", loaded.Credentials[0].APIKey)
 	}
 }
+
+func TestRotateKey_ProjectKeyUpdatesEveryEnvCredential(t *testing.T) {
+	var calls []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls = append(calls, r.Method+" "+r.URL.Path+" "+r.Header.Get("X-API-Key"))
+		w.WriteHeader(http.StatusCreated)
+		w.Write([]byte(`{"id":"ak_new","key":"as_proj_new_key_0002","prefix":"as_proj_new_key_","scope":"project","permission":"write"}`))
+	}))
+	defer srv.Close()
+
+	dir := t.TempDir()
+	workspace.Init(dir, workspace.WorkspaceConfig{
+		ProjectID: "p1", ActiveEnv: "e1",
+		Credentials: []workspace.Credential{
+			{APIKey: "as_proj_old_key_0001", BaseURL: srv.URL, EnvID: "e1", EnvName: "production"},
+			{APIKey: "as_proj_old_key_0001", BaseURL: srv.URL, EnvID: "e2", EnvName: "staging"},
+		},
+	})
+	wsDir := filepath.Join(dir, ".airstrings")
+	wsCfg, _ := workspace.LoadConfig(wsDir)
+	cred, _ := wsCfg.ActiveCredential()
+
+	result, err := workspace.RotateKey(wsDir, wsCfg, cred)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(calls) != 1 || calls[0] != "POST /v1/projects/p1/api-keys/rotate as_proj_old_key_0001" {
+		t.Errorf("calls = %v", calls)
+	}
+	if !result.Revoked || result.NewKeyID != "ak_new" {
+		t.Errorf("result = %+v", result)
+	}
+	loaded, _ := workspace.LoadConfig(wsDir)
+	for _, c := range loaded.Credentials {
+		if c.APIKey != "as_proj_new_key_0002" {
+			t.Errorf("credential %s still holds %q", c.EnvName, c.APIKey)
+		}
+	}
+}

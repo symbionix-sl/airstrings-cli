@@ -20,6 +20,9 @@ type RotateResult struct {
 // verifies it, and revokes the old key. The credential must point into wsCfg.
 func RotateKey(wsDir string, wsCfg *WorkspaceConfig, cred *Credential) (*RotateResult, error) {
 	oldClient := client.New(cred.APIKey, cred.BaseURL, wsCfg.ProjectID, cred.EnvID)
+	if client.KeyType(cred.APIKey) != "environment" {
+		return rotateProjectKey(wsDir, wsCfg, oldClient, cred.APIKey)
+	}
 
 	list, err := oldClient.ListAPIKeys()
 	if err != nil {
@@ -81,4 +84,22 @@ func RotateKey(wsDir string, wsCfg *WorkspaceConfig, cred *Credential) (*RotateR
 	}
 	result.Revoked = true
 	return result, nil
+}
+
+// rotateProjectKey swaps the project key server-side (the old key dies in the
+// same call) and replaces it in every credential.
+func rotateProjectKey(wsDir string, wsCfg *WorkspaceConfig, c *client.Client, oldKey string) (*RotateResult, error) {
+	newKey, err := c.RotateProjectKey()
+	if err != nil {
+		return nil, fmt.Errorf("rotate project key: %w", err)
+	}
+	for i := range wsCfg.Credentials {
+		if wsCfg.Credentials[i].APIKey == oldKey {
+			wsCfg.Credentials[i].APIKey = newKey.Key
+		}
+	}
+	if err := SaveConfig(wsDir, wsCfg); err != nil {
+		return nil, fmt.Errorf("save config: %w — the old key is already revoked; create a new project key in the dashboard", err)
+	}
+	return &RotateResult{NewKeyID: newKey.ID, NewKeyPrefix: newKey.Prefix, Revoked: true}, nil
 }
