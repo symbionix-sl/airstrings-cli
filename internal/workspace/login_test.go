@@ -78,11 +78,11 @@ func TestPollLogin_SlowDownAddsFiveSeconds(t *testing.T) {
 	}
 }
 
-func TestLoginRerunPollsUpTo30sThenExits9(t *testing.T) {
+func TestLoginRerunPollsUpTo90sThenExits9(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	srv, n := tokenServer(t, pendingReply)
 	var slept []time.Duration
-	_, err := PollLogin(pendingFor(srv.URL), RerunPollBudget, recorder(&slept))
+	_, err := PollLogin(pendingFor(srv.URL), PollBudget, recorder(&slept))
 	if !errors.Is(err, ErrLoginPending) {
 		t.Fatalf("err = %v, want ErrLoginPending", err)
 	}
@@ -90,7 +90,7 @@ func TestLoginRerunPollsUpTo30sThenExits9(t *testing.T) {
 	for _, d := range slept {
 		total += d
 	}
-	if total > 30*time.Second || total < 25*time.Second || atomic.LoadInt32(n) != int32(len(slept))+1 {
+	if total > 90*time.Second || total < 85*time.Second || atomic.LoadInt32(n) != int32(len(slept))+1 {
 		t.Errorf("slept %v (total %v) over %d polls", slept, total, atomic.LoadInt32(n))
 	}
 }
@@ -99,15 +99,15 @@ func TestLoginRerunSlowDownStillExits9(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	srv, _ := tokenServer(t, slowDownReply)
 	var slept []time.Duration
-	if _, err := PollLogin(pendingFor(srv.URL), RerunPollBudget, recorder(&slept)); !errors.Is(err, ErrLoginPending) {
+	if _, err := PollLogin(pendingFor(srv.URL), PollBudget, recorder(&slept)); !errors.Is(err, ErrLoginPending) {
 		t.Fatalf("err = %v, want ErrLoginPending", err)
 	}
 	var total time.Duration
 	for _, d := range slept {
 		total += d
 	}
-	if total > 30*time.Second {
-		t.Errorf("slept %v past the 30s budget", total)
+	if total > 90*time.Second {
+		t.Errorf("slept %v past the 90s budget", total)
 	}
 }
 
@@ -137,7 +137,7 @@ func TestPollLogin_ExpiredTokenCarriesNextStep(t *testing.T) {
 }
 
 func TestPendingMessageSaysOwnerMustApprove(t *testing.T) {
-	if s := PendingNextStep("https://u"); !strings.Contains(s, "owner") || !strings.Contains(s, "https://u") {
+	if s := PendingNextStep("https://u"); s != "Approve in the browser at https://u, then run the same command again" {
 		t.Errorf("PendingNextStep = %q", s)
 	}
 }

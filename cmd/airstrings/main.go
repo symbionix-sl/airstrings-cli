@@ -274,8 +274,9 @@ Bind this folder to a project and write .airstrings/config.json.
   Project key   Binds to the key's project. In an existing workspace it
                 switches to the key in place, keeping local strings.
 
-Without a terminal the login prints a URL and exits 9: open it, approve,
-then re-run the same command.
+Without a terminal the login opens the browser and waits up to 90 s for
+approval. With --no-browser or CI, or on timeout, it exits 9 with the URL:
+approve, then re-run the same command.
 
 Flags:
   --name <name>             Name for the created project
@@ -287,8 +288,8 @@ Flags:
 
 Log in through the browser. An owner of the organization approves the request,
 then an org key is stored in ~/.config/airstrings/credentials.json (0600).
-Logging in again revokes the previous key. Without a terminal it prints the
-URL and exits 9; re-run after approving.
+Logging in again revokes the previous key. Without a terminal it waits up to
+90 s; with --no-browser or CI, or on timeout, it exits 9 with the URL.
 `,
 	"logout": `Usage: airstrings logout [--url <base-url>]
 
@@ -845,8 +846,8 @@ func parseLoginFlags(args []string) (baseURL string, noBrowser bool) {
 }
 
 // login runs the device flow and returns the stored org key. Interactive runs
-// block until approval; otherwise the first run exits 9 with the approval URL
-// and a re-run polls for up to 30 s.
+// block until approval. Otherwise it polls for up to 90 s, except a first run
+// without an opened browser (or in CI), which exits 9 with the approval URL.
 func login(baseURL string, noBrowser bool) *workspace.OrgKey {
 	p, fresh, err := workspace.StartLogin(baseURL, client.ClientName(version))
 	if err != nil {
@@ -859,17 +860,16 @@ func login(baseURL string, noBrowser bool) *workspace.OrgKey {
 		}
 		failAPI("start login", err)
 	}
+	opened := false
 	if fresh {
 		fmt.Fprintf(os.Stderr, "To log in, open:\n  %s\nand check the code %s. An owner of your AirStrings organization must approve.\n", p.VerificationURIComplete, p.UserCode)
-		if !noBrowser {
-			workspace.OpenBrowser(p.VerificationURIComplete)
-		}
+		opened = !noBrowser && workspace.OpenBrowser(p.VerificationURIComplete)
 	}
 	interactive := isInteractive()
-	budget := workspace.RerunPollBudget
+	budget := workspace.PollBudget
 	if interactive {
 		budget = time.Until(p.ExpiresAt)
-	} else if fresh {
+	} else if fresh && (!opened || os.Getenv("CI") != "") {
 		failPending(p)
 	}
 	key, err := workspace.PollLogin(p, budget, time.Sleep)

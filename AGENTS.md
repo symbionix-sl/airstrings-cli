@@ -44,10 +44,12 @@ the folder and writes `.airstrings/config.json`. It never reuses a project by
 name: a name collision exits 2 and names the existing project (use
 `--project <id>` or `--name <other>`).
 
-Without a terminal the login cannot wait, so the command **exits 9** and prints
+Without a terminal the command opens the browser and waits up to 90 s for an
+owner of the organization to approve, then finishes. With `--no-browser` or `CI`
+set, or if nobody approves in time, it **exits 9** and prints
 `{status:"pending", verification_uri_complete, user_code, expires_in, next_step}`.
-Give the URL to the user (an owner of the organization approves), then re-run the
-same command; the re-run waits up to 30 s for the approval.
+Give the URL to the user, then re-run the same command; each re-run waits up to
+90 s. Don't pass `--no-browser` unless the machine has no browser.
 
 **Project key:** `airstrings init <as_proj_…>` binds the folder to the key's
 project (create one at `<webapp>/projects/{p}/api-keys`). One project key covers
@@ -163,7 +165,7 @@ not interpolated) — use `icu` for interpolation.
 ## Typical agent flow
 
 ```
-airstrings init --json                                     # exit 9 → user approves → re-run
+airstrings init --json                                     # browser opens, user approves; exit 9 → re-run
 airstrings status --json                                   # confirm target
 airstrings strings set welcome.title en="Welcome" --format text --push
 airstrings strings ls --key-prefix welcome. --json

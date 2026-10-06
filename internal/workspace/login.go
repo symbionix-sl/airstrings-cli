@@ -12,10 +12,10 @@ import (
 
 var ErrLoginPending = errors.New("login not approved yet")
 
-const RerunPollBudget = 30 * time.Second
+const PollBudget = 90 * time.Second
 
 func PendingNextStep(url string) string {
-	return "Ask an organization owner to open " + url + " and approve, then retry"
+	return "Approve in the browser at " + url + ", then run the same command again"
 }
 
 // StartLogin returns the unexpired pending login for baseURL, or starts a new
@@ -106,18 +106,20 @@ func errorCode(err error) string {
 	return ""
 }
 
-func OpenBrowser(url string) {
+func OpenBrowser(url string) bool {
 	if os.Getenv("AIRSTRINGS_NO_BROWSER") != "" || client.ValidateBaseURL(url) != nil {
-		return
+		return false
 	}
 	var cmd *exec.Cmd
-	switch runtime.GOOS {
-	case "darwin":
+	switch {
+	case os.Getenv("BROWSER") != "":
+		cmd = exec.Command(os.Getenv("BROWSER"), url)
+	case runtime.GOOS == "darwin":
 		cmd = exec.Command("open", url)
-	case "windows":
+	case runtime.GOOS == "windows":
 		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", url)
 	default:
 		cmd = exec.Command("xdg-open", url)
 	}
-	cmd.Start()
+	return cmd.Start() == nil
 }

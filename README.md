@@ -51,7 +51,7 @@ cd my-project
 airstrings init
 ```
 
-With no key, `init` opens the browser to log in (an owner of your organization approves), stores an org key in `~/.config/airstrings/credentials.json`, creates a project named after the folder and writes `.airstrings/config.json`. Use `--name <name>` to name it, or `--project <id>` to bind an existing project. Without a terminal it prints the approval URL and exits 9 — re-run the same command after approving.
+With no key, `init` opens the browser to log in (an owner of your organization approves), stores an org key in `~/.config/airstrings/credentials.json`, creates a project named after the folder and writes `.airstrings/config.json`. Use `--name <name>` to name it, or `--project <id>` to bind an existing project. Without a terminal it waits up to 90 s for the approval; if it times out (or with `--no-browser`/CI) it exits 9 with the URL — re-run the same command after approving.
 
 Already have a project key (`as_proj_…`, from the dashboard's API keys page)? `airstrings init <project-key>` binds the folder to that project. One project key covers every environment.
 

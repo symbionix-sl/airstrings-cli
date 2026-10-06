@@ -215,7 +215,43 @@ func TestCLISendsUserAgent(t *testing.T) {
 func TestLoginPendingNextStepHasURL(t *testing.T) {
 	srv := loginServer(t, `{"error":{"code":"authorization_pending","message":"pending"}}`, http.StatusBadRequest)
 	code, _, stderr := runCLI(t, "login", "--url", srv.URL)
-	if code != 9 || !strings.Contains(stderr, "Next step: Ask an organization owner to open https://app/cli/approve?code=BCDF-GHJK") || strings.Contains(stderr, "open verification_uri_complete") {
+	if code != 9 || !strings.Contains(stderr, "Next step: Approve in the browser at https://app/cli/approve?code=BCDF-GHJK, then run the same command again") || strings.Contains(stderr, "open verification_uri_complete") {
 		t.Errorf("exit = %d\nstderr: %s", code, stderr)
+	}
+}
+
+func approveOnSecondPoll(t *testing.T) (*httptest.Server, *int) {
+	polls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/cli/auth/start":
+			w.Write([]byte(strings.Replace(startReply, `"interval":5`, `"interval":1`, 1)))
+		case "/v1/cli/auth/token":
+			polls++
+			if polls == 1 {
+				w.WriteHeader(http.StatusBadRequest)
+				w.Write([]byte(`{"error":{"code":"authorization_pending","message":"pending"}}`))
+				return
+			}
+			w.Write([]byte(`{"api_key":"as_org_new","key_id":"ak_2","org_id":"org_1","org_name":"Acme","full_power":true}`))
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return srv, &polls
+}
+
+func TestLoginNonTTYWithBrowserPollsUntilApproved(t *testing.T) {
+	srv, polls := approveOnSecondPoll(t)
+	code, stdout, stderr := runSharedInDir(t, t.TempDir(), []string{"AIRSTRINGS_NO_BROWSER=", "BROWSER=true", "CI="}, "login", "--url", srv.URL, "--json")
+	if code != 0 || *polls != 2 || !strings.Contains(stdout, `"status": "logged_in"`) {
+		t.Errorf("exit = %d, polls = %d\nstdout: %s\nstderr: %s", code, *polls, stdout, stderr)
+	}
+}
+
+func TestLoginNonTTYNoBrowserExits9WithoutPolling(t *testing.T) {
+	srv, polls := approveOnSecondPoll(t)
+	code, stdout, _ := runSharedInDir(t, t.TempDir(), []string{"AIRSTRINGS_NO_BROWSER=", "BROWSER=true", "CI="}, "login", "--url", srv.URL, "--no-browser", "--json")
+	if code != 9 || *polls != 0 || !strings.Contains(stdout, "Approve in the browser at https://app/cli/approve?code=BCDF-GHJK, then run the same command again") {
+		t.Errorf("exit = %d, polls = %d\nstdout: %s", code, *polls, stdout)
 	}
 }
