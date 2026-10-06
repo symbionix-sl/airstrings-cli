@@ -50,14 +50,14 @@ type WorkspaceConfig struct {
 // ActiveCredential returns the credential matching the active environment.
 func (c *WorkspaceConfig) ActiveCredential() (*Credential, error) {
 	if c.ActiveEnv == "" {
-		return nil, fmt.Errorf("no active environment — run: airstrings env add <api-key>")
+		return nil, fmt.Errorf("no active environment — run: airstrings init <project-key>")
 	}
 	for i := range c.Credentials {
 		if c.Credentials[i].EnvID == c.ActiveEnv {
 			return &c.Credentials[i], nil
 		}
 	}
-	return nil, fmt.Errorf("no credentials for environment %s — run: airstrings env add <api-key>", c.ActiveEnv)
+	return nil, fmt.Errorf("no credentials for environment %s — run: airstrings init <project-key>", c.ActiveEnv)
 }
 
 // FindByEnvID returns the credential for a given environment ID, or nil.
