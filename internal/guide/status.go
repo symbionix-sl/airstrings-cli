@@ -54,9 +54,11 @@ func Inspect(c *client.Client, apiKey string, hasKey func(envID string) bool) De
 	if c == nil {
 		return d
 	}
-	if keys, err := c.ListAPIKeys(); err == nil && len(apiKey) >= 8 {
+	if client.KeyType(apiKey) == "org" {
+		d.KeyScope = "write"
+	} else if keys, err := c.ListAPIKeys(); err == nil {
 		for _, k := range keys.Data {
-			if k.Prefix == apiKey[:8] {
+			if k.Prefix != "" && strings.HasPrefix(apiKey, k.Prefix) {
 				d.KeyScope = k.Permission
 			}
 		}
@@ -84,10 +86,10 @@ func Inspect(c *client.Client, apiKey string, hasKey func(envID string) bool) De
 	has := func(id string) bool { return id == active.ID || (hasKey != nil && hasKey(id)) }
 	dash := c.DashboardURL("")
 	promote := PromoteURL(dash, c.ProjectID(), def.ID)
-	h := Status(active.Name, active.IsDefault, def.Name, def.IsSealed, has(def.ID), promote, APIKeysURL(dash, c.ProjectID(), def.ID))
+	h := Status(active.Name, active.IsDefault, def.Name, def.IsSealed, has(def.ID), promote, APIKeysURL(dash, c.ProjectID()))
 	if active.IsDefault && def.IsSealed && !otherKey(envs, def.ID, has) {
 		if st := OpenEnv(envs, def.ID); st != nil {
-			h = NeedStagingKey(def.Name, st.Name, APIKeysURL(dash, c.ProjectID(), st.ID), promote)
+			h = NeedStagingKey(def.Name, st.Name, APIKeysURL(dash, c.ProjectID()), promote)
 		}
 	}
 	d.Hint = &h

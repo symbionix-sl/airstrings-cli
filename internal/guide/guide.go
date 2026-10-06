@@ -45,8 +45,8 @@ func PromoteURL(dashboard, projectID, envID string) string {
 	return fmt.Sprintf("%s/projects/%s/env/%s/promote", dashboard, projectID, envID)
 }
 
-func APIKeysURL(dashboard, projectID, envID string) string {
-	return fmt.Sprintf("%s/projects/%s/env/%s/api-keys", dashboard, projectID, envID)
+func APIKeysURL(dashboard, projectID string) string {
+	return fmt.Sprintf("%s/projects/%s/api-keys", dashboard, projectID)
 }
 
 // ProtectedNoKey is state 4: switching to a protected env the workspace has no key for.
@@ -61,7 +61,7 @@ func ProtectedNoKey(envName, promoteURL string) Hint {
 func OpenNoKey(envName, apiKeysURL string) Hint {
 	return Hint{
 		Message:  fmt.Sprintf("%s accepts direct publishing, but this workspace has no %s key.", Title(envName), client.StripControl(envName)),
-		NextStep: fmt.Sprintf("Create one at %s (%s, write), then `airstrings env add <key>`", apiKeysURL, client.StripControl(envName)),
+		NextStep: fmt.Sprintf("Create a project key at %s, then `airstrings init <key>`", apiKeysURL),
 	}
 }
 
@@ -69,8 +69,8 @@ func OpenNoKey(envName, apiKeysURL string) Hint {
 func NeedStagingKey(defName, stagingName, apiKeysURL, promoteURL string) Hint {
 	return Hint{
 		Message: fmt.Sprintf("%s is protected: changes reach it only by promotion.", Title(defName)),
-		NextStep: fmt.Sprintf("Create a %s write key at %s and run `airstrings env add <key>`, publish to %s, then ask a human to promote: %s",
-			client.StripControl(stagingName), apiKeysURL, client.StripControl(stagingName), promoteURL),
+		NextStep: fmt.Sprintf("Create a project key at %s and run `airstrings init <key>`, publish to %s, then ask a human to promote: %s",
+			apiKeysURL, client.StripControl(stagingName), promoteURL),
 	}
 }
 

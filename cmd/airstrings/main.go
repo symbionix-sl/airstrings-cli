@@ -605,7 +605,7 @@ func switchEnv(wsCfg *workspace.WorkspaceConfig, name string) {
 			h := guide.ProtectedNoKey(e.Name, guide.PromoteURL(c.DashboardURL(""), wsCfg.ProjectID, e.ID))
 			output.FailNext(output.ExitProtected, h.Message, h.NextStep)
 		}
-		h := guide.OpenNoKey(e.Name, guide.APIKeysURL(c.DashboardURL(""), wsCfg.ProjectID, e.ID))
+		h := guide.OpenNoKey(e.Name, guide.APIKeysURL(c.DashboardURL(""), wsCfg.ProjectID))
 		output.FailNext(output.ExitAuth, h.Message, h.NextStep)
 	}
 	output.Fail(output.ExitNotFound, "environment %q does not exist in this project. Available: %s", name, strings.Join(names, ", "))
@@ -626,12 +626,8 @@ func statusClient() *client.Client {
 	return c
 }
 
-func statusInfo(wsCfg *workspace.WorkspaceConfig, apiKey string) guide.Details {
-	var hasKey func(string) bool
-	if wsCfg != nil {
-		hasKey = func(id string) bool { return wsCfg.FindByEnvID(id) != nil }
-	}
-	return guide.Inspect(statusClient(), apiKey, hasKey)
+func statusInfo(wsCfg *workspace.WorkspaceConfig, auth workspace.Auth) guide.Details {
+	return guide.Inspect(statusClient(), auth.Key, auth.HasKey(wsCfg))
 }
 
 func protectionLine(d guide.Details) string {
@@ -662,7 +658,8 @@ func printStatus(wsDir string, wsCfg *workspace.WorkspaceConfig) {
 		url = "https://api.airstrings.com"
 	}
 
-	info := statusInfo(wsCfg, cred.APIKey)
+	auth, _ := workspace.ResolveAuth(wsCfg)
+	info := statusInfo(wsCfg, auth)
 
 	if output.JSONMode {
 		envs := make([]map[string]any, 0, len(wsCfg.Credentials))
@@ -685,6 +682,9 @@ func printStatus(wsDir string, wsCfg *workspace.WorkspaceConfig) {
 			"protection":        info.Protection,
 			"protection_by_env": info.ProtectionByEnv,
 			"key_scope":         info.KeyScope,
+			"key_type":          auth.Type(),
+			"key_source":        auth.Source,
+			"full_power":        auth.FullPower(),
 			"hint":              info.Hint,
 			"environments":      envs,
 		})
@@ -694,7 +694,7 @@ func printStatus(wsDir string, wsCfg *workspace.WorkspaceConfig) {
 	fmt.Printf("Project:  %s (%s)\n", wsCfg.ProjectName, wsCfg.ProjectID)
 	fmt.Printf("Env:      %s (%s)\n", cred.EnvName, cred.EnvID)
 	fmt.Printf("API URL:  %s\n", url)
-	fmt.Printf("Key:      %s...%s (%s)\n", cred.APIKey[:8], cred.APIKey[len(cred.APIKey)-4:], info.KeyScope)
+	fmt.Printf("Key:      %s (%s, %s, %s)\n", maskKey(auth.Key), auth.Type(), info.KeyScope, auth.Source)
 	fmt.Printf("Protection: %s\n", protectionLine(info))
 	printHint(info.Hint)
 }
@@ -708,12 +708,8 @@ func printEnvStatus(env workspace.EnvAuth) {
 	if base == "" {
 		base = "https://api.airstrings.com"
 	}
-	masked := env.APIKey
-	if len(masked) > 12 {
-		masked = masked[:8] + "..." + masked[len(masked)-4:]
-	}
-
-	info := statusInfo(nil, env.APIKey)
+	auth := workspace.Auth{Key: env.APIKey, BaseURL: env.BaseURL, Source: env.Source}
+	info := statusInfo(nil, auth)
 
 	if output.JSONMode {
 		output.JSON(map[string]any{
@@ -724,6 +720,9 @@ func printEnvStatus(env workspace.EnvAuth) {
 			"protection":        info.Protection,
 			"protection_by_env": info.ProtectionByEnv,
 			"key_scope":         info.KeyScope,
+			"key_type":          auth.Type(),
+			"key_source":        auth.Source,
+			"full_power":        auth.FullPower(),
 			"hint":              info.Hint,
 		})
 		return
@@ -737,11 +736,11 @@ func printEnvStatus(env workspace.EnvAuth) {
 	if envID == "" {
 		envID = "(default env, resolved from key)"
 	}
-	fmt.Printf("Source:   environment (AIRSTRINGS_API_KEY)\n")
+	fmt.Printf("Source:   %s\n", env.Source)
 	fmt.Printf("Project:  %s\n", projectID)
 	fmt.Printf("Env:      %s\n", envID)
 	fmt.Printf("API URL:  %s\n", base)
-	fmt.Printf("Key:      %s (%s)\n", masked, info.KeyScope)
+	fmt.Printf("Key:      %s (%s, %s)\n", maskKey(auth.Key), auth.Type(), info.KeyScope)
 	fmt.Printf("Protection: %s\n", protectionLine(info))
 	printHint(info.Hint)
 }
@@ -1195,8 +1194,9 @@ func handleEnv(args []string) {
 	}
 
 	_, wsCfg := mustWorkspace()
+	auth, _ := workspace.ResolveAuth(wsCfg)
 
-	list := guide.EnvRows(envs, func(id string) bool { return wsCfg.FindByEnvID(id) != nil }, wsCfg.ActiveEnv)
+	list := guide.EnvRows(envs, auth.HasKey(wsCfg), wsCfg.ActiveEnv)
 
 	if output.JSONMode {
 		output.JSON(list)
@@ -2997,8 +2997,15 @@ func handleInit(args []string) {
 	}
 
 	wsDir := filepath.Join(cwd, ".airstrings")
+	rebind := ""
 	if _, err := os.Stat(filepath.Join(wsDir, "config.json")); err == nil {
-		if !purge {
+		if purge {
+			if err := os.RemoveAll(wsDir); err != nil {
+				output.Errorf("remove workspace: %s", err)
+			}
+		} else if old, err := workspace.LoadConfig(wsDir); err == nil && client.KeyType(apiKey) == "project" {
+			rebind = old.ProjectID
+		} else {
 			projName, envName := describeWorkspace(wsDir)
 			if apiKey == "" && name == "" && workspace.ProjectFlag == "" {
 				if output.JSONMode {
@@ -3009,16 +3016,16 @@ func handleInit(args []string) {
 				return
 			}
 			output.Errorf("workspace already initialized for %s / %s\n"+
-				"to add another environment, run:\n"+
-				"  airstrings env add <api-key>\n"+
+				"to switch to a project key, run:\n"+
+				"  airstrings init <project-key>\n"+
 				"(use --purge to wipe and re-init)", projName, envName)
-		}
-		if err := os.RemoveAll(wsDir); err != nil {
-			output.Errorf("remove workspace: %s", err)
 		}
 	}
 
 	opts := workspace.SetupOptions{APIKey: apiKey, BaseURL: baseURL, Name: name, Project: workspace.ProjectFlag}
+	if rebind != "" {
+		opts.Project = rebind
+	}
 	res, err := workspace.Setup(cwd, opts)
 	if errors.Is(err, workspace.ErrNoKey) {
 		loginURL := baseURL
@@ -3027,6 +3034,11 @@ func handleInit(args []string) {
 		}
 		login(loginURL, noBrowser)
 		res, err = workspace.Setup(cwd, opts)
+	}
+	var usage *workspace.UsageError
+	if rebind != "" && errors.As(err, &usage) {
+		output.FailNext(output.ExitUsage, "this key belongs to another project than this workspace ("+rebind+")",
+			"Use a key for "+rebind+", or run: airstrings init <key> --purge (wipes local strings)")
 	}
 	if err != nil {
 		failResolve(err)

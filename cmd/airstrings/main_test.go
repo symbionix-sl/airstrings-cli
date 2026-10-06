@@ -536,8 +536,8 @@ func TestInitRefusesToClobberExistingWorkspace(t *testing.T) {
 	if !strings.Contains(stderr, "already initialized for Old Project / production") {
 		t.Errorf("error missing project/env name: %s", stderr)
 	}
-	if !strings.Contains(stderr, "airstrings env add <api-key>") {
-		t.Errorf("error missing env-add hint: %s", stderr)
+	if !strings.Contains(stderr, "airstrings init <project-key>") {
+		t.Errorf("error missing project-key hint: %s", stderr)
 	}
 	if cfg := readSharedConfig(t, dir); cfg.ProjectID != "proj_old" || len(cfg.Credentials) != 1 || cfg.Credentials[0].APIKey != "key_old" {
 		t.Errorf("existing workspace was modified without --purge: %+v", cfg)

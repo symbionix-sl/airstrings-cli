@@ -99,7 +99,7 @@ func TestEnvUseProductionWithoutKey(t *testing.T) {
 		want     []string
 	}{
 		{"protected", true, 7, []string{"Production is protected, so this workspace doesn't need a production key.", "airstrings sdk-config --env production", "/projects/proj_test/env/env_prod/promote"}},
-		{"open", false, 3, []string{"Production accepts direct publishing, but this workspace has no production key.", "/projects/proj_test/env/env_prod/api-keys", "airstrings env add <key>"}},
+		{"open", false, 3, []string{"Production accepts direct publishing, but this workspace has no production key.", "/projects/proj_test/api-keys", "airstrings init <key>"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -149,7 +149,7 @@ func TestStatusShowsScopeAndHint(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d\nstderr: %s", code, stderr)
 	}
-	for _, w := range []string{"(write)", "Connected to staging. Production is protected.", "/projects/proj_test/env/env_prod/promote"} {
+	for _, w := range []string{", write, workspace)", "Connected to staging. Production is protected.", "/projects/proj_test/env/env_prod/promote"} {
 		if !strings.Contains(stdout, w) {
 			t.Errorf("status missing %q\n%s", w, stdout)
 		}
@@ -277,7 +277,7 @@ func TestStatusProductionOnlyKeyNeedsStagingKey(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d\nstderr: %s", code, stderr)
 	}
-	for _, w := range []string{"Production is protected: changes reach it only by promotion.", "Create a staging write key at ", "/projects/proj_test/env/env_staging/api-keys and run `airstrings env add <key>`, publish to staging, then ask a human to promote: ", "/projects/proj_test/env/env_prod/promote"} {
+	for _, w := range []string{"Production is protected: changes reach it only by promotion.", "Create a project key at ", "/projects/proj_test/api-keys and run `airstrings init <key>`, publish to staging, then ask a human to promote: ", "/projects/proj_test/env/env_prod/promote"} {
 		if !strings.Contains(stdout, w) {
 			t.Errorf("status missing %q\n%s", w, stdout)
 		}
@@ -408,5 +408,73 @@ func TestPromoteToNothingPendingIsNoop(t *testing.T) {
 	code, stdout, _ := runSharedInDir(t, dir, nil, "promote", "--to", "production")
 	if code != 0 || !strings.Contains(stdout, "Nothing to promote") {
 		t.Errorf("exit = %d\nstdout: %s", code, stdout)
+	}
+}
+
+func TestStatusOrgKeyReportsTypeAndSource(t *testing.T) {
+	srv := guidanceServer(t, true, nil)
+	dir := stagingWorkspace(t, srv.URL)
+	code, stdout, stderr := runSharedInDir(t, dir, []string{"AIRSTRINGS_ORG_API_KEY=as_org_0123456789abcdef0123", "AIRSTRINGS_BASE_URL=" + srv.URL}, "status", "--json")
+	if code != 0 {
+		t.Fatalf("exit = %d\nstderr: %s", code, stderr)
+	}
+	var out map[string]any
+	json.Unmarshal([]byte(stdout), &out)
+	if out["key_type"] != "org" || out["key_source"] != "env:AIRSTRINGS_ORG_API_KEY" || out["key_scope"] != "write" {
+		t.Errorf("status = %v", out)
+	}
+	if strings.Contains(stdout, "as_org_0123456789abcdef0123") {
+		t.Error("status printed the full key")
+	}
+}
+
+func TestStatusKeylessWorkspaceDoesNotPanic(t *testing.T) {
+	srv := guidanceServer(t, true, nil)
+	dir := t.TempDir()
+	writeWorkspace(t, dir, "", srv.URL)
+	code, stdout, stderr := runSharedInDir(t, dir, nil, "status")
+	if code != 0 || strings.Contains(stderr, "panic") || !strings.Contains(stdout, "Key:") {
+		t.Errorf("exit = %d\nstdout: %s\nstderr: %s", code, stdout, stderr)
+	}
+}
+
+func TestEnvListTypedKeyAllKeyInWorkspace(t *testing.T) {
+	srv := guidanceServer(t, true, nil)
+	dir := stagingWorkspace(t, srv.URL)
+	code, stdout, stderr := runSharedInDir(t, dir, []string{"AIRSTRINGS_ORG_API_KEY=as_org_k", "AIRSTRINGS_BASE_URL=" + srv.URL}, "env", "--json")
+	if code != 0 {
+		t.Fatalf("exit = %d\nstderr: %s", code, stderr)
+	}
+	var rows []map[string]any
+	json.Unmarshal([]byte(stdout), &rows)
+	if len(rows) != 2 || rows[0]["key_in_workspace"] != true || rows[1]["key_in_workspace"] != true {
+		t.Errorf("rows = %s", stdout)
+	}
+}
+
+func TestInitProjectKeyUpgradesExistingWorkspace(t *testing.T) {
+	srv := guidanceServer(t, true, func(w http.ResponseWriter, r *http.Request) bool {
+		if r.URL.Path == "/v1/projects" {
+			w.Write([]byte(`{"id":"proj_test","name":"Test"}`))
+			return true
+		}
+		if strings.HasSuffix(r.URL.Path, "/sections") {
+			w.Write([]byte(`{"data":[]}`))
+			return true
+		}
+		return false
+	})
+	dir := stagingWorkspace(t, srv.URL)
+	os.WriteFile(filepath.Join(dir, ".airstrings", "strings.csv"), []byte("key,locale,value,format\n"), 0600)
+	code, stdout, stderr := runSharedInDir(t, dir, nil, "init", "as_proj_newkey", "--url", srv.URL)
+	if code != 0 {
+		t.Fatalf("exit = %d\nstdout: %s\nstderr: %s", code, stdout, stderr)
+	}
+	cfg := readSharedConfig(t, dir)
+	if len(cfg.Credentials) != 2 || cfg.Credentials[0].APIKey != "as_proj_newkey" {
+		t.Errorf("credentials = %+v", cfg.Credentials)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".airstrings", "strings.csv")); err != nil {
+		t.Error("local strings removed by re-init")
 	}
 }

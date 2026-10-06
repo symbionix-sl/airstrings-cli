@@ -47,3 +47,15 @@ func TestJSSnippetsCarryRequiredConfigFields(t *testing.T) {
 		}
 	}
 }
+
+func TestGuideNoKeyPointsAtProjectKeys(t *testing.T) {
+	url := APIKeysURL("https://app.x", "proj_1")
+	if url != "https://app.x/projects/proj_1/api-keys" {
+		t.Errorf("APIKeysURL = %q", url)
+	}
+	for _, h := range []Hint{OpenNoKey("production", url), NeedStagingKey("production", "staging", url, "https://app.x/promote")} {
+		if strings.Contains(h.NextStep, "env add") || !strings.Contains(h.NextStep, "airstrings init <key>") || !strings.Contains(h.NextStep, "project key") {
+			t.Errorf("hint next step = %q", h.NextStep)
+		}
+	}
+}

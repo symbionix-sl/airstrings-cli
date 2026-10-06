@@ -920,7 +920,8 @@ func handleToolStatus(json.RawMessage) *CallToolResult {
 	if err != nil {
 		return errorResult(err.Error())
 	}
-	d := guide.Inspect(c, cred.APIKey, func(id string) bool { return wsCfg.FindByEnvID(id) != nil })
+	auth, _ := workspace.ResolveAuth(wsCfg)
+	d := guide.Inspect(c, auth.Key, auth.HasKey(wsCfg))
 	out, _ := json.Marshal(map[string]any{
 		"project_id":        wsCfg.ProjectID,
 		"project_name":      wsCfg.ProjectName,
@@ -929,6 +930,9 @@ func handleToolStatus(json.RawMessage) *CallToolResult {
 		"protection":        d.Protection,
 		"protection_by_env": d.ProtectionByEnv,
 		"key_scope":         d.KeyScope,
+		"key_type":          auth.Type(),
+		"key_source":        auth.Source,
+		"full_power":        auth.FullPower(),
 		"hint":              d.Hint,
 	})
 	return textResult(string(out))
@@ -943,6 +947,7 @@ func handleToolEnvList(json.RawMessage) *CallToolResult {
 	if err != nil {
 		return errorResult(fmt.Sprintf("list environments: %s", err))
 	}
-	out, _ := json.Marshal(guide.EnvRows(envs, func(id string) bool { return wsCfg.FindByEnvID(id) != nil }, wsCfg.ActiveEnv))
+	auth, _ := workspace.ResolveAuth(wsCfg)
+	out, _ := json.Marshal(guide.EnvRows(envs, auth.HasKey(wsCfg), wsCfg.ActiveEnv))
 	return textResult(string(out))
 }

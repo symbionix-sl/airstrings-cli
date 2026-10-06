@@ -25,6 +25,28 @@ type UsageError struct {
 
 func (e *UsageError) Error() string { return e.Message }
 
+func (a Auth) Type() string {
+	if a.Key == "" {
+		return "none"
+	}
+	return client.KeyType(a.Key)
+}
+
+func (a Auth) FullPower() any {
+	if a.Type() != "org" {
+		return nil
+	}
+	if k := storedOrgKey(a.BaseURL); a.Source == "login" && k != nil {
+		return k.FullPower
+	}
+	return "unknown"
+}
+
+func (a Auth) HasKey(cfg *WorkspaceConfig) func(envID string) bool {
+	typed := a.Type() == "org" || a.Type() == "project"
+	return func(id string) bool { return typed || (cfg != nil && cfg.FindByEnvID(id) != nil) }
+}
+
 func baseURLFor(cfg *WorkspaceConfig) string {
 	if u := os.Getenv("AIRSTRINGS_BASE_URL"); u != "" {
 		return u

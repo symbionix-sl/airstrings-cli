@@ -141,6 +141,9 @@ func Setup(dir string, opts SetupOptions) (*SetupResult, error) {
 		}
 	}
 
+	if old, err := LoadConfig(filepath.Join(dir, DirName)); err == nil && old.ProjectID == cfg.ProjectID {
+		cfg.BundlesDir, cfg.Shared = old.BundlesDir, old.Shared
+	}
 	if err := Init(dir, cfg); err != nil {
 		return nil, fmt.Errorf("init workspace: %w", err)
 	}
