@@ -21,6 +21,7 @@ const (
 	ExitRateLimited = 6
 	ExitProtected   = 7
 	ExitQuota       = 8
+	ExitAuthPending = 9
 )
 
 var useColor = colorEnabled()

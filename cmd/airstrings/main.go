@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/symbionix-sl/airstrings-cli/internal/bundlepull"
 	"github.com/symbionix-sl/airstrings-cli/internal/client"
@@ -70,9 +71,9 @@ func main() {
 
 	switch cmd {
 	case "login":
-		output.Errorf("'login' has been replaced by 'init'. Use: airstrings init <api-key>")
+		handleLogin(args)
 	case "logout":
-		output.Errorf("'logout' has been replaced. Use: airstrings env rm <name>")
+		handleLogout(args)
 	case "status":
 		handleStatus(args)
 	case "project":
@@ -746,6 +747,151 @@ func printEnvStatus(env workspace.EnvAuth) {
 }
 
 // --- Auth commands ---
+
+func handleLogin(args []string) {
+	baseURL, noBrowser := parseLoginFlags(args)
+	key := login(baseURL, noBrowser)
+	if output.JSONMode {
+		output.JSON(map[string]any{"status": "logged_in", "org_id": key.OrgID, "org_name": key.OrgName, "full_power": key.FullPower, "base_url": key.BaseURL})
+		return
+	}
+	output.Success(fmt.Sprintf("Logged in to %s", client.StripControl(key.OrgName)))
+}
+
+func parseLoginFlags(args []string) (baseURL string, noBrowser bool) {
+	baseURL = os.Getenv("AIRSTRINGS_BASE_URL")
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--url", "--base-url":
+			if i+1 >= len(args) {
+				output.Fail(output.ExitUsage, "%s requires a value", args[i])
+			}
+			i++
+			baseURL = args[i]
+		case "--no-browser":
+			noBrowser = true
+		default:
+			output.Fail(output.ExitUsage, "unknown argument: %s", args[i])
+		}
+	}
+	if baseURL == "" {
+		baseURL = client.DefaultBaseURL
+	}
+	if err := client.ValidateBaseURL(baseURL); err != nil {
+		output.Fail(output.ExitUsage, "%s", err)
+	}
+	return baseURL, noBrowser
+}
+
+// login runs the device flow and returns the stored org key. Interactive runs
+// block until approval; otherwise the first run exits 9 with the approval URL
+// and a re-run polls for up to 30 s.
+func login(baseURL string, noBrowser bool) *workspace.OrgKey {
+	p, fresh, err := workspace.StartLogin(baseURL, client.ClientName(version))
+	if err != nil {
+		var apiErr *client.APIError
+		if errors.Is(err, workspace.ErrCredStore) {
+			output.FailNext(output.ExitAuth, err.Error(), workspace.CredStoreNextStep)
+		}
+		if errors.As(err, &apiErr) && apiErr.StatusCode == 404 {
+			output.FailNext(output.ExitAuth, "this API does not support login yet", "Use: airstrings init <api-key>")
+		}
+		failAPI("start login", err)
+	}
+	if fresh {
+		fmt.Fprintf(os.Stderr, "To log in, open:\n  %s\nand check the code %s. An owner of your AirStrings organization must approve.\n", p.VerificationURIComplete, p.UserCode)
+		if !noBrowser && os.Getenv("AIRSTRINGS_NO_BROWSER") == "" {
+			openBrowser(p.VerificationURIComplete)
+		}
+	}
+	interactive := isInteractive()
+	budget := workspace.RerunPollBudget
+	if interactive {
+		budget = time.Until(p.ExpiresAt)
+	} else if fresh {
+		failPending(p)
+	}
+	key, err := workspace.PollLogin(p, budget, time.Sleep)
+	switch {
+	case errors.Is(err, workspace.ErrLoginPending) && interactive:
+		output.FailNext(output.ExitAuth, "the login code expired before it was approved", "Run: airstrings login")
+	case errors.Is(err, workspace.ErrLoginPending):
+		failPending(p)
+	case errors.Is(err, workspace.ErrCredStore):
+		output.FailNext(output.ExitAuth, err.Error(), workspace.CredStoreNextStep)
+	case err != nil:
+		failAPI("login", err)
+	}
+	return key
+}
+
+func failPending(p *workspace.PendingLogin) {
+	next := workspace.PendingNextStep
+	if os.Getenv("CI") != "" {
+		next += ". In CI, set AIRSTRINGS_API_KEY to a project key from the dashboard instead"
+	}
+	if output.JSONMode {
+		output.JSON(map[string]any{
+			"status":                    "pending",
+			"verification_uri_complete": p.VerificationURIComplete,
+			"user_code":                 p.UserCode,
+			"expires_in":                int(time.Until(p.ExpiresAt).Seconds()),
+			"next_step":                 next,
+		})
+	} else {
+		fmt.Fprintf(os.Stderr, "Login pending: %s (code %s)\nNext step: %s\n", p.VerificationURIComplete, p.UserCode, next)
+	}
+	os.Exit(output.ExitAuthPending)
+}
+
+func isInteractive() bool {
+	info, err := os.Stdout.Stat()
+	return stdinIsTTY() && err == nil && info.Mode()&os.ModeCharDevice != 0 && !output.JSONMode && os.Getenv("CI") == ""
+}
+
+func openBrowser(url string) {
+	if client.ValidateBaseURL(url) != nil {
+		return
+	}
+	var cmd *exec.Cmd
+	switch runtime.GOOS {
+	case "darwin":
+		cmd = exec.Command("open", url)
+	case "windows":
+		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", url)
+	default:
+		cmd = exec.Command("xdg-open", url)
+	}
+	cmd.Start()
+}
+
+func handleLogout(args []string) {
+	baseURL, _ := parseLoginFlags(args)
+	creds, err := workspace.LoadCreds()
+	if err != nil {
+		output.Errorf("%s", err)
+	}
+	creds.Pending = nil
+	k := creds.OrgKey(baseURL)
+	if k != nil {
+		if err := client.New(k.APIKey, baseURL, "", "").RevokeOrgKey(k.KeyID); err != nil {
+			output.Warnf("could not revoke the key on the server (%s); an owner can delete it in the dashboard", err)
+		}
+		creds.DeleteOrgKey(baseURL)
+	}
+	if err := workspace.SaveCreds(creds); err != nil {
+		output.FailNext(output.ExitAuth, err.Error(), workspace.CredStoreNextStep)
+	}
+	if output.JSONMode {
+		output.JSON(map[string]any{"status": "logged_out", "base_url": baseURL})
+		return
+	}
+	if k == nil {
+		output.Success("Not logged in")
+		return
+	}
+	output.Success(fmt.Sprintf("Logged out of %s", client.StripControl(k.OrgName)))
+}
 
 // parseKeyAndURL extracts an API key and optional --url/--base-url from args.
 func parseKeyAndURL(args []string) (string, string) {

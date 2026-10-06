@@ -151,6 +151,8 @@ func (e *APIError) ExitCode() int {
 		return 7
 	case "quota_exceeded":
 		return 8
+	case "access_denied", "expired_token":
+		return 3
 	}
 	switch e.StatusCode {
 	case 401, 403:
