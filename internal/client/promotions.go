@@ -37,3 +37,21 @@ func (c *Client) PromotionPreview(sourceEnvID, targetEnvID string) (*PromotionPr
 	err := c.do("GET", c.projectPath()+"/promotions/preview", q, nil, &resp)
 	return &resp, err
 }
+
+type PromoteRequest struct {
+	SourceEnvID string   `json:"source_env_id"`
+	TargetEnvID string   `json:"target_env_id"`
+	Keys        []string `json:"keys"`
+}
+
+type PromoteResponse struct {
+	KeysPromoted   int                   `json:"keys_promoted"`
+	PublishResults []LocalePublishStatus `json:"publish_results"`
+}
+
+// Promote copies the given keys from source to target and republishes target bundles.
+func (c *Client) Promote(req PromoteRequest) (*PromoteResponse, error) {
+	var resp PromoteResponse
+	err := c.do("POST", c.projectPath()+"/promotions", nil, req, &resp)
+	return &resp, err
+}

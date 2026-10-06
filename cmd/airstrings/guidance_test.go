@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -352,5 +353,60 @@ func TestSDKConfigSaysValuesArePublic(t *testing.T) {
 	}
 	if !strings.Contains(out.Notice, "not secrets") {
 		t.Errorf("notice = %q", out.Notice)
+	}
+}
+
+func promoteServer(t *testing.T, entries string, apply func(w http.ResponseWriter, body string)) string {
+	srv := guidanceServer(t, true, func(w http.ResponseWriter, r *http.Request) bool {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/promotions/preview"):
+			w.Write([]byte(`{"source_env_id":"env_staging","target_env_id":"env_prod","summary":{"added":2},"entries":` + entries + `}`))
+		case r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/promotions"):
+			b, _ := io.ReadAll(r.Body)
+			apply(w, string(b))
+		default:
+			return false
+		}
+		return true
+	})
+	return stagingWorkspace(t, srv.URL)
+}
+
+func TestPromoteToAppliesPreviewedKeys(t *testing.T) {
+	var body string
+	dir := promoteServer(t, `[{"key":"home.title","locales":[]},{"key":"home.cta","locales":[]}]`, func(w http.ResponseWriter, b string) {
+		body = b
+		w.Write([]byte(`{"source_env_id":"env_staging","target_env_id":"env_prod","keys_promoted":2,"publish_results":[{"locale":"en","status":"ok"}],"promoted_at":"2026-10-06T00:00:00Z"}`))
+	})
+	code, stdout, stderr := runSharedInDir(t, dir, nil, "promote", "--to", "production")
+	if code != 0 {
+		t.Fatalf("exit = %d\nstdout: %s\nstderr: %s", code, stdout, stderr)
+	}
+	if body != `{"source_env_id":"env_staging","target_env_id":"env_prod","keys":["home.title","home.cta"]}` {
+		t.Errorf("apply body = %s", body)
+	}
+	if !strings.Contains(stdout, "Promoted 2 keys") {
+		t.Errorf("stdout: %s", stdout)
+	}
+}
+
+func TestPromoteToForbiddenKeyExit7WithNextStep(t *testing.T) {
+	dir := promoteServer(t, `[{"key":"home.title","locales":[]}]`, func(w http.ResponseWriter, b string) {
+		w.WriteHeader(http.StatusForbidden)
+		w.Write([]byte(`{"error":{"code":"environment_protected","message":"Production is protected: changes reach it only by promotion.","next_step":"Ask a human to promote: https://app/promote"}}`))
+	})
+	code, _, stderr := runSharedInDir(t, dir, nil, "promote", "--to", "production")
+	if code != 7 || !strings.Contains(stderr, "Ask a human to promote") {
+		t.Errorf("exit = %d\nstderr: %s", code, stderr)
+	}
+}
+
+func TestPromoteToNothingPendingIsNoop(t *testing.T) {
+	dir := promoteServer(t, `[]`, func(w http.ResponseWriter, b string) {
+		t.Error("apply called with nothing to promote")
+	})
+	code, stdout, _ := runSharedInDir(t, dir, nil, "promote", "--to", "production")
+	if code != 0 || !strings.Contains(stdout, "Nothing to promote") {
+		t.Errorf("exit = %d\nstdout: %s", code, stdout)
 	}
 }

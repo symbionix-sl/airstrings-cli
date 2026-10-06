@@ -2301,18 +2301,53 @@ func handlePublish(args []string) {
 // --- Promote commands ---
 
 func handlePromote(args []string) {
-	if len(args) == 0 {
-		output.Fail(output.ExitUsage, "usage: airstrings promote preview [--from <env-name>] [--to <env-name>]")
-	}
-	switch args[0] {
-	case "preview":
+	switch {
+	case len(args) > 0 && args[0] == "preview":
 		handlePromotePreview(args[1:])
+	case len(args) > 0 && strings.HasPrefix(args[0], "--"):
+		handlePromoteApply(args)
 	default:
-		output.Fail(output.ExitUsage, "unknown promote command: %s — only 'preview' is available", args[0])
+		output.Fail(output.ExitUsage, "usage: airstrings promote [preview] [--from <env-name>] [--to <env-name>]")
 	}
 }
 
-func handlePromotePreview(args []string) {
+func handlePromoteApply(args []string) {
+	c, envs, resp := previewPromotion(args)
+	from, to := envDisplayName(envs, resp.SourceEnvID), envDisplayName(envs, resp.TargetEnvID)
+	if len(resp.Entries) == 0 {
+		if output.JSONMode {
+			output.JSON(map[string]any{"keys_promoted": 0})
+			return
+		}
+		fmt.Printf("Nothing to promote: %s matches %s\n", to, from)
+		return
+	}
+	keys := make([]string, len(resp.Entries))
+	for i, e := range resp.Entries {
+		keys[i] = e.Key
+	}
+	total := &client.PromoteResponse{}
+	for start := 0; start < len(keys); start += 500 {
+		res, err := c.Promote(client.PromoteRequest{SourceEnvID: resp.SourceEnvID, TargetEnvID: resp.TargetEnvID, Keys: keys[start:min(start+500, len(keys))]})
+		if err != nil {
+			failAPI("promote", err)
+		}
+		total.KeysPromoted += res.KeysPromoted
+		total.PublishResults = append(total.PublishResults, res.PublishResults...)
+	}
+	if output.JSONMode {
+		output.JSON(total)
+		return
+	}
+	output.Success(fmt.Sprintf("Promoted %d keys %s → %s (%d added, %d updated)", total.KeysPromoted, from, to, resp.Summary.Added, resp.Summary.Updated))
+	for _, r := range total.PublishResults {
+		if r.Status != "ok" {
+			output.Warnf("publish %s failed: %s", r.Locale, client.StripControl(r.Error))
+		}
+	}
+}
+
+func previewPromotion(args []string) (*client.Client, []client.Environment, *client.PromotionPreview) {
 	fromName := ""
 	toName := ""
 	for i := 0; i < len(args); i++ {
@@ -2331,7 +2366,7 @@ func handlePromotePreview(args []string) {
 			if strings.HasPrefix(args[i], "-") {
 				output.Fail(output.ExitUsage, "unknown flag: %s", args[i])
 			}
-			output.Fail(output.ExitUsage, "usage: airstrings promote preview [--from <env-name>] [--to <env-name>]")
+			output.Fail(output.ExitUsage, "usage: airstrings promote [preview] [--from <env-name>] [--to <env-name>]")
 		}
 	}
 
@@ -2371,6 +2406,13 @@ func handlePromotePreview(args []string) {
 	if err != nil {
 		failAPI("promotion preview", err)
 	}
+	resp.SourceEnvID, resp.TargetEnvID = sourceID, targetID
+	return c, envs, resp
+}
+
+func handlePromotePreview(args []string) {
+	c, envs, resp := previewPromotion(args)
+	sourceID, targetID := resp.SourceEnvID, resp.TargetEnvID
 	resp.ApplyURL = guide.PromoteURL(c.DashboardURL(""), c.ProjectID(), targetID)
 
 	if output.JSONMode {

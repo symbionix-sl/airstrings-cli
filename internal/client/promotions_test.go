@@ -1,6 +1,7 @@
 package client
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -79,5 +80,28 @@ func TestPromotionPreview_APIError(t *testing.T) {
 	}
 	if apiErr.StatusCode != 422 {
 		t.Errorf("expected status 422, got %d", apiErr.StatusCode)
+	}
+}
+
+func TestPromote(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "POST" || r.URL.Path != "/v1/projects/proj/promotions" {
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		var req PromoteRequest
+		json.NewDecoder(r.Body).Decode(&req)
+		if req.SourceEnvID != "env_src" || req.TargetEnvID != "env_tgt" || len(req.Keys) != 2 || req.Keys[1] != "b" {
+			t.Errorf("unexpected body: %+v", req)
+		}
+		w.Write([]byte(`{"source_env_id":"env_src","target_env_id":"env_tgt","keys_promoted":2,"publish_results":[{"locale":"en","status":"ok"}],"promoted_at":"2026-10-06T00:00:00Z"}`))
+	}))
+	defer srv.Close()
+
+	resp, err := New("as_org_k", srv.URL, "proj", "env").Promote(PromoteRequest{SourceEnvID: "env_src", TargetEnvID: "env_tgt", Keys: []string{"a", "b"}})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp.KeysPromoted != 2 || len(resp.PublishResults) != 1 || resp.PublishResults[0].Status != "ok" {
+		t.Errorf("unexpected response: %+v", resp)
 	}
 }
