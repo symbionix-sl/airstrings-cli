@@ -137,8 +137,8 @@ func TestPollLogin_ExpiredTokenCarriesNextStep(t *testing.T) {
 }
 
 func TestPendingMessageSaysOwnerMustApprove(t *testing.T) {
-	if !strings.Contains(PendingNextStep, "owner") {
-		t.Errorf("PendingNextStep %q does not say an owner must approve", PendingNextStep)
+	if s := PendingNextStep("https://u"); !strings.Contains(s, "owner") || !strings.Contains(s, "https://u") {
+		t.Errorf("PendingNextStep = %q", s)
 	}
 }
 

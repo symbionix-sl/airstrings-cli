@@ -12,10 +12,11 @@ import (
 
 var ErrLoginPending = errors.New("login not approved yet")
 
-const (
-	PendingNextStep = "Ask an organization owner to open verification_uri_complete and approve, then retry"
-	RerunPollBudget = 30 * time.Second
-)
+const RerunPollBudget = 30 * time.Second
+
+func PendingNextStep(url string) string {
+	return "Ask an organization owner to open " + url + " and approve, then retry"
+}
 
 // StartLogin returns the unexpired pending login for baseURL, or starts a new
 // one; fresh reports a new start. The store is written before the API call so

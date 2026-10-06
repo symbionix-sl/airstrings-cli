@@ -327,7 +327,7 @@ func login(baseURL string) (*workspace.OrgKey, *CallToolResult) {
 		"verification_uri_complete": p.VerificationURIComplete,
 		"user_code":                 p.UserCode,
 		"expires_in":                int(time.Until(p.ExpiresAt).Seconds()),
-		"next_step":                 workspace.PendingNextStep,
+		"next_step":                 workspace.PendingNextStep(p.VerificationURIComplete),
 	})
 	return nil, textResult(string(out))
 }

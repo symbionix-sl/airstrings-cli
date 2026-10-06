@@ -211,3 +211,11 @@ func TestCLISendsUserAgent(t *testing.T) {
 		t.Errorf("User-Agent = %q", ua)
 	}
 }
+
+func TestLoginPendingNextStepHasURL(t *testing.T) {
+	srv := loginServer(t, `{"error":{"code":"authorization_pending","message":"pending"}}`, http.StatusBadRequest)
+	code, _, stderr := runCLI(t, "login", "--url", srv.URL)
+	if code != 9 || !strings.Contains(stderr, "Next step: Ask an organization owner to open https://app/cli/approve?code=BCDF-GHJK") || strings.Contains(stderr, "open verification_uri_complete") {
+		t.Errorf("exit = %d\nstderr: %s", code, stderr)
+	}
+}

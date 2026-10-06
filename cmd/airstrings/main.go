@@ -887,7 +887,7 @@ func login(baseURL string, noBrowser bool) *workspace.OrgKey {
 }
 
 func failPending(p *workspace.PendingLogin) {
-	next := workspace.PendingNextStep
+	next := workspace.PendingNextStep(p.VerificationURIComplete)
 	if os.Getenv("CI") != "" {
 		next += ". In CI, set AIRSTRINGS_API_KEY to a project key from the dashboard instead"
 	}
