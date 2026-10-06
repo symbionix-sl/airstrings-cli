@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.18.2] - 2026-10-06
+
+### Changed
+
+- `login` / keyless `init` without a terminal open the browser and wait up to 90 s for approval, finishing in one run. They exit 9 right away only with `--no-browser` or `CI`; on timeout they exit 9 as before, and each re-run waits up to 90 s (was 30 s).
+- Pending `next_step`: "Approve in the browser at <url>, then run the same command again".
+- The browser opener honors `$BROWSER`.
+
 ## [0.18.1] - 2026-10-06
 
 ### Fixed
