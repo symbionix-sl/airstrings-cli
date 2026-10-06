@@ -845,8 +845,9 @@ func parseLoginFlags(args []string) (baseURL string, noBrowser bool) {
 	return baseURL, noBrowser
 }
 
-// login runs the device flow and returns the stored org key. Interactive runs
-// block until approval. Otherwise it polls for up to 90 s, except a first run
+// login runs the device flow and returns the stored org key. Every run opens
+// the approval page unless the browser is disabled. Interactive runs block
+// until approval. Otherwise it polls for up to 90 s, except a first run
 // without an opened browser (or in CI), which exits 9 with the approval URL.
 func login(baseURL string, noBrowser bool) *workspace.OrgKey {
 	p, fresh, err := workspace.StartLogin(baseURL, client.ClientName(version))
@@ -860,11 +861,10 @@ func login(baseURL string, noBrowser bool) *workspace.OrgKey {
 		}
 		failAPI("start login", err)
 	}
-	opened := false
 	if fresh {
 		fmt.Fprintf(os.Stderr, "To log in, open:\n  %s\nand check the code %s. An owner of your AirStrings organization must approve.\n", p.VerificationURIComplete, p.UserCode)
-		opened = !noBrowser && workspace.OpenBrowser(p.VerificationURIComplete)
 	}
+	opened := !noBrowser && workspace.OpenBrowser(p.VerificationURIComplete)
 	interactive := isInteractive()
 	budget := workspace.PollBudget
 	if interactive {

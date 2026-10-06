@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 const startReply = `{"device_code":"dc","user_code":"BCDF-GHJK","verification_uri":"https://app/cli/approve","verification_uri_complete":"https://app/cli/approve?code=BCDF-GHJK","interval":5,"expires_in":600}`
@@ -253,5 +254,37 @@ func TestLoginNonTTYNoBrowserExits9WithoutPolling(t *testing.T) {
 	code, stdout, _ := runSharedInDir(t, t.TempDir(), []string{"AIRSTRINGS_NO_BROWSER=", "BROWSER=true", "CI="}, "login", "--url", srv.URL, "--no-browser", "--json")
 	if code != 9 || *polls != 0 || !strings.Contains(stdout, "Approve in the browser at https://app/cli/approve?code=BCDF-GHJK, then run the same command again") {
 		t.Errorf("exit = %d, polls = %d\nstdout: %s", code, *polls, stdout)
+	}
+}
+
+func pendingRerun(t *testing.T, args ...string) (int, string) {
+	srv, _ := approveOnSecondPoll(t)
+	dir := t.TempDir()
+	xdg := filepath.Join(dir, "xdg")
+	os.MkdirAll(filepath.Join(xdg, "airstrings"), 0700)
+	pending := `{"org_keys":[],"pending":{"base_url":"` + srv.URL + `","device_code":"dc","user_code":"BCDF-GHJK",` +
+		`"verification_uri_complete":"https://app/cli/approve?code=BCDF-GHJK","interval":1,"expires_at":"` + time.Now().Add(time.Hour).UTC().Format(time.RFC3339) + `"}}`
+	os.WriteFile(filepath.Join(xdg, "airstrings", "credentials.json"), []byte(pending), 0600)
+	opened := filepath.Join(dir, "opened")
+	shim := filepath.Join(dir, "browser")
+	os.WriteFile(shim, []byte("#!/bin/sh\necho \"$1\" >> "+opened+"\n"), 0700)
+	code, _, stderr := runSharedInDir(t, dir, []string{"XDG_CONFIG_HOME=" + xdg, "AIRSTRINGS_NO_BROWSER=", "BROWSER=" + shim, "CI="}, append([]string{"login", "--url", srv.URL}, args...)...)
+	if code != 0 {
+		t.Fatalf("exit = %d\nstderr: %s", code, stderr)
+	}
+	time.Sleep(200 * time.Millisecond)
+	data, _ := os.ReadFile(opened)
+	return code, string(data)
+}
+
+func TestLoginRerunReopensBrowser(t *testing.T) {
+	if _, opened := pendingRerun(t); opened != "https://app/cli/approve?code=BCDF-GHJK\n" {
+		t.Errorf("browser opened with %q", opened)
+	}
+}
+
+func TestLoginRerunNoBrowserDoesNotOpen(t *testing.T) {
+	if _, opened := pendingRerun(t, "--no-browser"); opened != "" {
+		t.Errorf("browser opened with %q", opened)
 	}
 }
