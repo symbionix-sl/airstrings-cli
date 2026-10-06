@@ -37,8 +37,8 @@ func runSharedCLIAgainst(t *testing.T, srvURL string, args ...string) (int, stri
 	return code, stdout.String(), stderr.String()
 }
 
-// sharedResolveHandler answers the two discovery calls a scoped key makes:
-// GetProject (GET /v1/projects) and ListEnvironments. Returns true if handled.
+// sharedResolveHandler answers the discovery calls a legacy scoped key makes:
+// GetProject, ListEnvironments and the environment probe. Returns true if handled.
 func sharedResolveHandler(w http.ResponseWriter, r *http.Request) bool {
 	switch {
 	case r.URL.Path == "/v1/projects" && r.Method == http.MethodGet:
@@ -46,6 +46,9 @@ func sharedResolveHandler(w http.ResponseWriter, r *http.Request) bool {
 		return true
 	case r.URL.Path == "/v1/projects/proj_shared/environments" && r.Method == http.MethodGet:
 		w.Write([]byte(`{"data":[{"id":"env_shared","project_id":"proj_shared","name":"production","is_default":true}]}`))
+		return true
+	case r.URL.Path == "/v1/projects/proj_shared/environments/env_shared" && r.Method == http.MethodGet:
+		w.Write([]byte(`{"id":"env_shared","project_id":"proj_shared","name":"production","is_default":true}`))
 		return true
 	}
 	return false

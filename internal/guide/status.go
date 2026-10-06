@@ -86,7 +86,7 @@ func Inspect(c *client.Client, apiKey string, hasKey func(envID string) bool) De
 	promote := PromoteURL(dash, c.ProjectID(), def.ID)
 	h := Status(active.Name, active.IsDefault, def.Name, def.IsSealed, has(def.ID), promote, APIKeysURL(dash, c.ProjectID(), def.ID))
 	if active.IsDefault && def.IsSealed && !otherKey(envs, def.ID, has) {
-		if st := stagingEnv(envs, def.ID); st != nil {
+		if st := OpenEnv(envs, def.ID); st != nil {
 			h = NeedStagingKey(def.Name, st.Name, APIKeysURL(dash, c.ProjectID(), st.ID), promote)
 		}
 	}
@@ -103,7 +103,8 @@ func otherKey(envs []client.Environment, defID string, has func(string) bool) bo
 	return false
 }
 
-func stagingEnv(envs []client.Environment, exclude string) *client.Environment {
+// OpenEnv returns the unsealed environment named staging, else the first unsealed one.
+func OpenEnv(envs []client.Environment, exclude string) *client.Environment {
 	var found *client.Environment
 	for i := range envs {
 		e := &envs[i]

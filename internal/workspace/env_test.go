@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/symbionix-sl/airstrings-cli/internal/client"
@@ -67,6 +68,9 @@ func TestClientFromEnv_ModeB_Resolves(t *testing.T) {
 					{ID: "env_b", Name: "prod", IsDefault: true},
 				},
 			})
+		case "/v1/projects/proj_1/environments/env_a", "/v1/projects/proj_1/environments/env_b":
+			id := r.URL.Path[len(r.URL.Path)-5:]
+			json.NewEncoder(w).Encode(client.Environment{ID: id, IsDefault: id == "env_b"})
 		default:
 			t.Errorf("unexpected path: %s", r.URL.Path)
 		}
@@ -93,24 +97,104 @@ func TestClientFromEnv_ModeB_Resolves(t *testing.T) {
 	}
 }
 
-func TestDefaultEnvID(t *testing.T) {
-	withDefault := []client.Environment{
-		{ID: "env_a", IsDefault: false},
-		{ID: "env_b", IsDefault: true},
+func TestPickEnv(t *testing.T) {
+	envs := []client.Environment{
+		{ID: "env_prod", Name: "production", IsDefault: true, IsSealed: true},
+		{ID: "env_dev", Name: "dev"},
+		{ID: "env_staging", Name: "staging"},
 	}
-	if got := defaultEnvID(withDefault); got != "env_b" {
-		t.Errorf("expected env_b, got %s", got)
+	if got, err := pickEnv("as_proj_x", "", "p", envs); err != nil || got != "env_staging" {
+		t.Errorf("project key: got %q, %v; want env_staging", got, err)
 	}
+	sealedOnly := []client.Environment{{ID: "env_a"}, {ID: "env_b", IsDefault: true, IsSealed: true}}
+	sealedOnly[0].IsSealed = true
+	if got, _ := pickEnv("as_org_x", "", "p", sealedOnly); got != "env_b" {
+		t.Errorf("all sealed: got %q, want default env_b", got)
+	}
+	if _, err := pickEnv("as_proj_x", "", "p", nil); err == nil {
+		t.Error("expected error for no environments")
+	}
+}
 
-	noDefault := []client.Environment{
-		{ID: "env_a", IsDefault: false},
-		{ID: "env_c", IsDefault: false},
-	}
-	if got := defaultEnvID(noDefault); got != "env_a" {
-		t.Errorf("expected first env_a, got %s", got)
-	}
+func probeServer(t *testing.T, bound map[string]bool) *httptest.Server {
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/projects":
+			json.NewEncoder(w).Encode(client.Project{ID: "proj_1"})
+		case "/v1/projects/proj_1/environments":
+			json.NewEncoder(w).Encode(client.EnvironmentList{Data: []client.Environment{
+				{ID: "env_prod", Name: "production", IsDefault: true, IsSealed: true},
+				{ID: "env_staging", Name: "staging"},
+			}})
+		case "/v1/projects/proj_1/environments/env_prod", "/v1/projects/proj_1/environments/env_staging":
+			id := strings.TrimPrefix(r.URL.Path, "/v1/projects/proj_1/environments/")
+			if bound == nil {
+				t.Errorf("typed key probed %s", r.URL.Path)
+			}
+			if !bound[id] {
+				w.WriteHeader(http.StatusNotFound)
+				w.Write([]byte(`{"error":{"code":"not_found","message":"not found"}}`))
+				return
+			}
+			json.NewEncoder(w).Encode(client.Environment{ID: id})
+		default:
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+}
 
-	if got := defaultEnvID(nil); got != "" {
-		t.Errorf("expected empty for no envs, got %s", got)
+func TestClientFromEnv_LegacyStagingKeyUsesBoundEnv(t *testing.T) {
+	srv := probeServer(t, map[string]bool{"env_staging": true})
+	defer srv.Close()
+	t.Setenv("AIRSTRINGS_API_KEY", "0123456789abcdef")
+	t.Setenv("AIRSTRINGS_BASE_URL", srv.URL)
+
+	c, _, err := ClientFromEnv()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if c.EnvID() != "env_staging" {
+		t.Errorf("EnvID = %q, want env_staging", c.EnvID())
+	}
+}
+
+func TestClientFromEnv_ProjectKeyPicksStaging(t *testing.T) {
+	srv := probeServer(t, nil)
+	defer srv.Close()
+	t.Setenv("AIRSTRINGS_API_KEY", "as_proj_x")
+	t.Setenv("AIRSTRINGS_BASE_URL", srv.URL)
+
+	c, _, err := ClientFromEnv()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if c.EnvID() != "env_staging" {
+		t.Errorf("EnvID = %q, want env_staging", c.EnvID())
+	}
+}
+
+func TestResolveSharedCredential_LegacyBoundEnv(t *testing.T) {
+	srv := probeServer(t, map[string]bool{"env_staging": true})
+	defer srv.Close()
+
+	cred, err := ResolveSharedCredential("0123456789abcdef", srv.URL)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cred.EnvID != "env_staging" {
+		t.Errorf("EnvID = %q, want env_staging", cred.EnvID)
+	}
+}
+
+func TestResolveSharedCredential_ProjectKey(t *testing.T) {
+	srv := probeServer(t, nil)
+	defer srv.Close()
+
+	cred, err := ResolveSharedCredential("as_proj_shared", srv.URL)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cred.ProjectID != "proj_1" || cred.EnvID != "env_staging" {
+		t.Errorf("unexpected credential: %+v", cred)
 	}
 }

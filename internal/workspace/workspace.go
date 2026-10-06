@@ -2,6 +2,7 @@ package workspace
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -9,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/symbionix-sl/airstrings-cli/internal/client"
+	"github.com/symbionix-sl/airstrings-cli/internal/guide"
 )
 
 const (
@@ -293,9 +295,9 @@ func ClientFromEnv() (*client.Client, bool, error) {
 		if err != nil {
 			return nil, true, fmt.Errorf("resolve environment from AIRSTRINGS_API_KEY: %w", err)
 		}
-		envID = defaultEnvID(envs)
-		if envID == "" {
-			return nil, true, fmt.Errorf("no environments found for this key — set AIRSTRINGS_ENV_ID")
+		envID, err = pickEnv(env.APIKey, env.BaseURL, projectID, envs)
+		if err != nil {
+			return nil, true, fmt.Errorf("resolve environment from AIRSTRINGS_API_KEY: %w — set AIRSTRINGS_ENV_ID", err)
 		}
 	}
 
@@ -323,9 +325,9 @@ func SharedClientFromEnv() (*client.Client, bool, error) {
 	if err != nil {
 		return nil, true, fmt.Errorf("resolve environment from AIRSTRINGS_SHARED_API_KEY: %w", err)
 	}
-	envID := defaultEnvID(envs)
-	if envID == "" {
-		return nil, true, fmt.Errorf("no environments found for the shared bucket key")
+	envID, err := pickEnv(key, baseURL, proj.ID, envs)
+	if err != nil {
+		return nil, true, fmt.Errorf("resolve environment from AIRSTRINGS_SHARED_API_KEY: %w", err)
 	}
 
 	return client.New(key, baseURL, proj.ID, envID), true, nil
@@ -342,9 +344,9 @@ func ResolveSharedCredential(apiKey, baseURL string) (*SharedCredential, error) 
 	if err != nil {
 		return nil, fmt.Errorf("resolve environment from shared key: %w", err)
 	}
-	envID := defaultEnvID(envs)
-	if envID == "" {
-		return nil, fmt.Errorf("no environments found for the shared bucket key")
+	envID, err := pickEnv(apiKey, baseURL, proj.ID, envs)
+	if err != nil {
+		return nil, fmt.Errorf("resolve environment from shared key: %w", err)
 	}
 	return &SharedCredential{APIKey: apiKey, BaseURL: baseURL, ProjectID: proj.ID, EnvID: envID}, nil
 }
@@ -369,6 +371,51 @@ func SharedClient() (*client.Client, error) {
 	}
 	s := cfg.Shared
 	return client.New(s.APIKey, s.BaseURL, s.ProjectID, s.EnvID), nil
+}
+
+// BoundEnvs returns the environments a legacy environment key authenticates to.
+// The error is set only when no environment matched and a probe failed for a
+// reason other than 403/404.
+func BoundEnvs(apiKey, baseURL, projectID string, envs []client.Environment) ([]client.Environment, error) {
+	probe := client.New(apiKey, baseURL, projectID, "")
+	var bound []client.Environment
+	var probeErr error
+	for _, env := range envs {
+		full, err := probe.GetEnvironment(env.ID)
+		if err != nil {
+			var apiErr *client.APIError
+			if !errors.As(err, &apiErr) || (apiErr.StatusCode != 404 && apiErr.StatusCode != 403) {
+				probeErr = err
+			}
+			continue
+		}
+		bound = append(bound, *full)
+	}
+	if len(bound) == 0 {
+		return nil, probeErr
+	}
+	return bound, nil
+}
+
+// pickEnv selects the environment a key works against: a legacy key's own
+// environment, otherwise the open staging environment, else the default.
+func pickEnv(apiKey, baseURL, projectID string, envs []client.Environment) (string, error) {
+	if len(envs) == 0 {
+		return "", fmt.Errorf("no environments found")
+	}
+	if client.KeyType(apiKey) == "environment" {
+		bound, err := BoundEnvs(apiKey, baseURL, projectID, envs)
+		if err != nil {
+			return "", err
+		}
+		if len(bound) == 0 {
+			return "", fmt.Errorf("API key does not authenticate to any environment in this project")
+		}
+		envs = bound
+	} else if e := guide.OpenEnv(envs, ""); e != nil {
+		return e.ID, nil
+	}
+	return defaultEnvID(envs), nil
 }
 
 func defaultEnvID(envs []client.Environment) string {

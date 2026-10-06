@@ -83,6 +83,9 @@ func TestResolveSharedCredential(t *testing.T) {
 					{ID: "env_b", IsDefault: true},
 				},
 			})
+		case "/v1/projects/proj_x/environments/env_a", "/v1/projects/proj_x/environments/env_b":
+			id := r.URL.Path[len(r.URL.Path)-5:]
+			json.NewEncoder(w).Encode(client.Environment{ID: id, IsDefault: id == "env_b"})
 		default:
 			t.Errorf("unexpected path: %s", r.URL.Path)
 		}
@@ -131,6 +134,8 @@ func TestSharedClient_EnvWins(t *testing.T) {
 			json.NewEncoder(w).Encode(client.EnvironmentList{
 				Data: []client.Environment{{ID: "env_env", IsDefault: true}},
 			})
+		case "/v1/projects/proj_env/environments/env_env":
+			json.NewEncoder(w).Encode(client.Environment{ID: "env_env", IsDefault: true})
 		default:
 			t.Errorf("unexpected path: %s", r.URL.Path)
 		}

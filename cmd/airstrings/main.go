@@ -805,20 +805,14 @@ func validateAndDiscover(apiKey, baseURL string) (*client.Project, []client.Envi
 // API keys are env-scoped: an env-scoped GET 404s on any env but the key's own,
 // so probing separates "envs the key can list" from "envs it can authenticate to".
 func addCredentials(wsCfg *workspace.WorkspaceConfig, apiKey, baseURL, projectID string, envs []client.Environment) ([]client.Environment, string) {
-	probe := client.New(apiKey, baseURL, projectID, "")
-
-	var filed []client.Environment
-	var probeErr error
-	for _, env := range envs {
-		full, err := probe.GetEnvironment(env.ID)
-		if err != nil {
-			var apiErr *client.APIError
-			if errors.As(err, &apiErr) && (apiErr.StatusCode == 404 || apiErr.StatusCode == 403) {
-				continue
-			}
-			probeErr = err
-			continue
-		}
+	filed, err := workspace.BoundEnvs(apiKey, baseURL, projectID, envs)
+	if err != nil {
+		failAPI("verify environment access", err)
+	}
+	if len(filed) == 0 {
+		output.Errorf("API key does not authenticate to any environment in this project")
+	}
+	for _, full := range filed {
 		wsCfg.AddOrUpdate(workspace.Credential{
 			APIKey:    apiKey,
 			BaseURL:   baseURL,
@@ -829,14 +823,6 @@ func addCredentials(wsCfg *workspace.WorkspaceConfig, apiKey, baseURL, projectID
 		if wsCfg.OrgID == "" {
 			wsCfg.OrgID = full.OrganizationID
 		}
-		filed = append(filed, *full)
-	}
-
-	if len(filed) == 0 {
-		if probeErr != nil {
-			failAPI("verify environment access", probeErr)
-		}
-		output.Errorf("API key does not authenticate to any environment in this project")
 	}
 
 	var activeEnvID, activeEnvName string
