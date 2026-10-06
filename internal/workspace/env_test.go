@@ -44,7 +44,8 @@ func TestClientFromEnv_ModeA_NoHTTP(t *testing.T) {
 	t.Setenv("AIRSTRINGS_PROJECT_ID", "proj_1")
 	t.Setenv("AIRSTRINGS_ENV_ID", "env_1")
 
-	c, ok, err := ClientFromEnv()
+	c, _, err := Resolve(nil)
+	ok := err == nil
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -82,7 +83,8 @@ func TestClientFromEnv_ModeB_Resolves(t *testing.T) {
 	t.Setenv("AIRSTRINGS_PROJECT_ID", "")
 	t.Setenv("AIRSTRINGS_ENV_ID", "")
 
-	c, ok, err := ClientFromEnv()
+	c, _, err := Resolve(nil)
+	ok := err == nil
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -149,7 +151,7 @@ func TestClientFromEnv_LegacyStagingKeyUsesBoundEnv(t *testing.T) {
 	t.Setenv("AIRSTRINGS_API_KEY", "0123456789abcdef")
 	t.Setenv("AIRSTRINGS_BASE_URL", srv.URL)
 
-	c, _, err := ClientFromEnv()
+	c, _, err := Resolve(nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -164,7 +166,7 @@ func TestClientFromEnv_ProjectKeyPicksStaging(t *testing.T) {
 	t.Setenv("AIRSTRINGS_API_KEY", "as_proj_x")
 	t.Setenv("AIRSTRINGS_BASE_URL", srv.URL)
 
-	c, _, err := ClientFromEnv()
+	c, _, err := Resolve(nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

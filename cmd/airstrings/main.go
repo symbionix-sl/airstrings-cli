@@ -29,13 +29,19 @@ func main() {
 		os.Exit(0)
 	}
 
-	// Check for --json flag anywhere
+	// Check for --json and --project anywhere
 	filtered := make([]string, 0, len(args))
-	for _, a := range args {
-		if a == "--json" {
+	for i := 0; i < len(args); i++ {
+		switch {
+		case args[i] == "--json":
 			output.JSONMode = true
-		} else {
-			filtered = append(filtered, a)
+		case args[i] == "--project" && i+1 < len(args):
+			i++
+			workspace.ProjectFlag = args[i]
+		case strings.HasPrefix(args[i], "--project="):
+			workspace.ProjectFlag = strings.TrimPrefix(args[i], "--project=")
+		default:
+			filtered = append(filtered, args[i])
 		}
 	}
 	args = filtered
@@ -452,40 +458,41 @@ func mustWorkspace() (string, *workspace.WorkspaceConfig) {
 	return wsDir, wsCfg
 }
 
-// mustClient returns a ready API client. AIRSTRINGS_API_KEY (env-var auth)
-// takes precedence over the on-disk workspace; otherwise the active workspace
-// credential is used.
+// mustClient returns a ready API client for the nearest workspace (if any);
+// see workspace.Resolve for key, project and environment precedence.
 func mustClient() *client.Client {
-	if c, ok, err := workspace.ClientFromEnv(); ok {
-		if err != nil {
-			failAPI("resolve credentials from environment", err)
+	var wsCfg *workspace.WorkspaceConfig
+	if wsDir, err := workspace.Find(); err == nil {
+		if wsCfg, err = workspace.LoadConfig(wsDir); err != nil {
+			output.Errorf("load workspace: %s", err)
 		}
-		noticeEnvOverride()
-		return c
 	}
-	_, wsCfg := mustWorkspace()
-	c, err := workspace.ResolveClient(wsCfg)
+	return clientFor(wsCfg)
+}
+
+// clientFor returns a client for a command that has already loaded a workspace.
+func clientFor(wsCfg *workspace.WorkspaceConfig) *client.Client {
+	c, auth, err := workspace.Resolve(wsCfg)
 	if err != nil {
-		output.Errorf("%s", err)
+		failResolve(err)
+	}
+	if strings.HasPrefix(auth.Source, "env:") {
+		noticeEnvOverride()
 	}
 	return c
 }
 
-// clientFor returns a client for a command that has already loaded a workspace
-// (push/pull/bundles pull). Env-var auth still wins over the workspace credential.
-func clientFor(wsCfg *workspace.WorkspaceConfig) *client.Client {
-	if c, ok, err := workspace.ClientFromEnv(); ok {
-		if err != nil {
-			failAPI("resolve credentials from environment", err)
-		}
-		noticeEnvOverride()
-		return c
+func failResolve(err error) {
+	var usage *workspace.UsageError
+	if errors.As(err, &usage) {
+		output.FailNext(output.ExitUsage, usage.Message, usage.NextStep)
 	}
-	c, err := workspace.ResolveClient(wsCfg)
-	if err != nil {
-		output.Errorf("%s", err)
+	var apiErr *client.APIError
+	var netErr *client.NetworkError
+	if errors.As(err, &apiErr) || errors.As(err, &netErr) {
+		failAPI("resolve credentials", err)
 	}
-	return c
+	output.Errorf("%s", err)
 }
 
 func noticeEnvOverride() {
@@ -607,21 +614,11 @@ func switchEnv(wsCfg *workspace.WorkspaceConfig, name string) {
 // wins over the workspace) but never exits: any failure yields a nil client so
 // status can degrade instead of aborting.
 func statusClient() *client.Client {
-	if c, ok, err := workspace.ClientFromEnv(); ok {
-		if err != nil {
-			return nil
-		}
-		return c
+	var wsCfg *workspace.WorkspaceConfig
+	if wsDir, err := workspace.Find(); err == nil {
+		wsCfg, _ = workspace.LoadConfig(wsDir)
 	}
-	wsDir, err := workspace.Find()
-	if err != nil {
-		return nil
-	}
-	wsCfg, err := workspace.LoadConfig(wsDir)
-	if err != nil {
-		return nil
-	}
-	c, err := workspace.ResolveClient(wsCfg)
+	c, _, err := workspace.Resolve(wsCfg)
 	if err != nil {
 		return nil
 	}

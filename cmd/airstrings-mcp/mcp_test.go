@@ -1021,3 +1021,44 @@ func TestMCP_SDKConfigDescriptionSaysPublic(t *testing.T) {
 	}
 	t.Fatal("airstrings_sdk_config not registered")
 }
+
+func TestMCP_StatusHonorsOrgKeyEnv(t *testing.T) {
+	var keys []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		keys = append(keys, r.Header.Get("X-API-Key"))
+		switch r.URL.Path {
+		case "/v1/projects/proj_test/environments":
+			w.Write([]byte(`{"data":[{"id":"env_staging","name":"staging","is_default":true}]}`))
+		default:
+			w.Write([]byte(`{"data":[]}`))
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	dir := t.TempDir()
+	workspace.Init(dir, workspace.WorkspaceConfig{
+		ProjectID: "proj_test", ActiveEnv: "env_staging",
+		Credentials: []workspace.Credential{{APIKey: "stagingkey000", BaseURL: srv.URL, EnvID: "env_staging", EnvName: "staging"}},
+	})
+	origDir, _ := os.Getwd()
+	os.Chdir(dir)
+	defer os.Chdir(origDir)
+	t.Setenv("AIRSTRINGS_ORG_API_KEY", "as_org_env")
+	t.Setenv("AIRSTRINGS_BASE_URL", srv.URL)
+
+	resp := mcpExchange(t, &MCPServer{}, "tools/call", 11, map[string]any{"name": "airstrings_status", "arguments": map[string]any{}})
+	resultJSON, _ := json.Marshal(resp.Result)
+	var res CallToolResult
+	json.Unmarshal(resultJSON, &res)
+	if res.IsError {
+		t.Fatalf("tool error: %s", res.Content[0].Text)
+	}
+	if len(keys) == 0 {
+		t.Fatal("no API call made")
+	}
+	for _, k := range keys {
+		if k != "as_org_env" {
+			t.Errorf("request sent key %q, want as_org_env", k)
+		}
+	}
+}

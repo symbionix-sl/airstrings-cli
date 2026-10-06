@@ -14,7 +14,7 @@ import (
 	"unicode"
 )
 
-const defaultBaseURL = "https://api.airstrings.com"
+const DefaultBaseURL = "https://api.airstrings.com"
 
 const (
 	OrgKeyPrefix     = "as_org_"
@@ -45,7 +45,7 @@ type Client struct {
 // New creates a new API client.
 func New(apiKey, baseURL, projectID, envID string) *Client {
 	if baseURL == "" {
-		baseURL = defaultBaseURL
+		baseURL = DefaultBaseURL
 	}
 	return &Client{
 		baseURL:   baseURL,

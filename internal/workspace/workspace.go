@@ -216,31 +216,35 @@ func writeFileAtomic(path string, data []byte) error {
 	return nil
 }
 
-// ResolveClient returns an API client configured from workspace credentials.
+// ResolveClient returns an API client for the workspace; see Resolve.
 func ResolveClient(wsCfg *WorkspaceConfig) (*client.Client, error) {
-	cred, err := wsCfg.ActiveCredential()
-	if err != nil {
-		return nil, err
-	}
-	return client.New(cred.APIKey, cred.BaseURL, wsCfg.ProjectID, wsCfg.ActiveEnv), nil
+	c, _, err := Resolve(wsCfg)
+	return c, err
 }
 
 // EnvAuth holds credentials sourced from environment variables.
 type EnvAuth struct {
+	Source    string
 	APIKey    string
 	BaseURL   string
 	ProjectID string
 	EnvID     string
 }
 
-// EnvAuthFromEnv reads AIRSTRINGS_* variables. The bool is false when
-// AIRSTRINGS_API_KEY is unset (no env-based auth requested).
+// EnvAuthFromEnv reads AIRSTRINGS_* variables. AIRSTRINGS_ORG_API_KEY wins
+// over AIRSTRINGS_API_KEY; the bool is false when neither is set.
 func EnvAuthFromEnv() (EnvAuth, bool) {
-	key := os.Getenv("AIRSTRINGS_API_KEY")
+	source := "AIRSTRINGS_ORG_API_KEY"
+	key := os.Getenv(source)
+	if key == "" {
+		source = "AIRSTRINGS_API_KEY"
+		key = os.Getenv(source)
+	}
 	if key == "" {
 		return EnvAuth{}, false
 	}
 	return EnvAuth{
+		Source:    "env:" + source,
 		APIKey:    key,
 		BaseURL:   os.Getenv("AIRSTRINGS_BASE_URL"),
 		ProjectID: os.Getenv("AIRSTRINGS_PROJECT_ID"),
@@ -267,41 +271,6 @@ func EnvOverride() (string, bool) {
 		return cred.EnvName, true
 	}
 	return env.EnvID, true
-}
-
-// ClientFromEnv builds an API client from AIRSTRINGS_* environment variables,
-// overriding any on-disk workspace. The second return is false when
-// AIRSTRINGS_API_KEY is unset. When set but project/env are not provided, they
-// are resolved from the key in one or two API calls (Mode B); supplying
-// AIRSTRINGS_PROJECT_ID and AIRSTRINGS_ENV_ID skips discovery entirely (Mode A).
-func ClientFromEnv() (*client.Client, bool, error) {
-	env, ok := EnvAuthFromEnv()
-	if !ok {
-		return nil, false, nil
-	}
-
-	projectID, envID := env.ProjectID, env.EnvID
-
-	if projectID == "" {
-		proj, err := client.New(env.APIKey, env.BaseURL, "", "").GetProject()
-		if err != nil {
-			return nil, true, fmt.Errorf("resolve project from AIRSTRINGS_API_KEY: %w", err)
-		}
-		projectID = proj.ID
-	}
-
-	if envID == "" {
-		envs, err := client.New(env.APIKey, env.BaseURL, projectID, "").ListEnvironments()
-		if err != nil {
-			return nil, true, fmt.Errorf("resolve environment from AIRSTRINGS_API_KEY: %w", err)
-		}
-		envID, err = pickEnv(env.APIKey, env.BaseURL, projectID, envs)
-		if err != nil {
-			return nil, true, fmt.Errorf("resolve environment from AIRSTRINGS_API_KEY: %w — set AIRSTRINGS_ENV_ID", err)
-		}
-	}
-
-	return client.New(env.APIKey, env.BaseURL, projectID, envID), true, nil
 }
 
 // SharedClientFromEnv builds an API client for the org shared-key bucket from
