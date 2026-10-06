@@ -13,13 +13,14 @@ import (
 	"testing"
 )
 
-var binPath string
+var binPath, testRoot string
 
 func TestMain(m *testing.M) {
 	dir, err := os.MkdirTemp("", "airstrings-cli-test")
 	if err != nil {
 		panic(err)
 	}
+	testRoot = dir
 	binPath = filepath.Join(dir, "airstrings")
 	out, err := exec.Command("go", "build", "-o", binPath, ".").CombinedOutput()
 	if err != nil {
@@ -39,7 +40,11 @@ func scrubbedEnv() []string {
 		}
 		env = append(env, e)
 	}
-	return env
+	xdg, err := os.MkdirTemp(testRoot, "xdg")
+	if err != nil {
+		panic(err)
+	}
+	return append(env, "XDG_CONFIG_HOME="+xdg, "AIRSTRINGS_NO_BROWSER=1")
 }
 
 func runCLI(t *testing.T, args ...string) (int, string, string) {

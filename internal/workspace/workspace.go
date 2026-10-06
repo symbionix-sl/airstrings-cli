@@ -186,23 +186,30 @@ func SaveConfig(wsDir string, cfg *WorkspaceConfig) error {
 	if err != nil {
 		return fmt.Errorf("marshal workspace config: %w", err)
 	}
-	tmp, err := os.CreateTemp(wsDir, ConfigFile+".tmp-*")
-	if err != nil {
+	if err := writeFileAtomic(filepath.Join(wsDir, ConfigFile), data); err != nil {
 		return fmt.Errorf("write workspace config: %w", err)
+	}
+	return nil
+}
+
+func writeFileAtomic(path string, data []byte) error {
+	tmp, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return err
 	}
 	tmpPath := tmp.Name()
 	if _, err := tmp.Write(data); err != nil {
 		tmp.Close()
 		os.Remove(tmpPath)
-		return fmt.Errorf("write workspace config: %w", err)
+		return err
 	}
 	if err := tmp.Close(); err != nil {
 		os.Remove(tmpPath)
-		return fmt.Errorf("write workspace config: %w", err)
+		return err
 	}
-	if err := os.Rename(tmpPath, filepath.Join(wsDir, ConfigFile)); err != nil {
+	if err := os.Rename(tmpPath, path); err != nil {
 		os.Remove(tmpPath)
-		return fmt.Errorf("write workspace config: %w", err)
+		return err
 	}
 	return nil
 }

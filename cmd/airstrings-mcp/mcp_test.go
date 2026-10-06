@@ -15,6 +15,23 @@ import (
 	"github.com/symbionix-sl/airstrings-cli/internal/workspace"
 )
 
+func TestMain(m *testing.M) {
+	dir, err := os.MkdirTemp("", "airstrings-xdg")
+	if err != nil {
+		panic(err)
+	}
+	for _, e := range os.Environ() {
+		if k, _, _ := strings.Cut(e, "="); strings.HasPrefix(k, "AIRSTRINGS_") {
+			os.Unsetenv(k)
+		}
+	}
+	os.Setenv("XDG_CONFIG_HOME", dir)
+	os.Setenv("AIRSTRINGS_NO_BROWSER", "1")
+	code := m.Run()
+	os.RemoveAll(dir)
+	os.Exit(code)
+}
+
 // mcpExchange sends a JSON-RPC request to the MCP server and returns the response.
 func mcpExchange(t *testing.T, server *MCPServer, method string, id int, params any) *JSONRPCResponse {
 	t.Helper()
