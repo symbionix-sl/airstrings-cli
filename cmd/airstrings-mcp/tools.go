@@ -146,7 +146,7 @@ var toolDefs = []ToolDef{
 			Properties: map[string]Property{
 				"key":        {Type: "string", Description: "The string key the experiment belongs to (e.g., 'onboarding.welcome')."},
 				"allocation": {Type: "object", Description: "Object mapping variant name to integer weight, e.g. {\"control\": 50, \"treatment\": 50}."},
-				"variants":   {Type: "object", Description: "Object mapping variant name to an object of locale=value pairs, e.g. {\"control\": {\"en\": \"Hello\"}, \"treatment\": {\"en\": \"Hi\"}}."},
+				"variants":   {Type: "object", Description: "Object mapping each non-control variant name to an object of locale=value pairs, e.g. {\"treatment\": {\"en\": \"Hi\"}}. Never include 'control' — it is the base string."},
 			},
 			Required: []string{"key"},
 		},
