@@ -9,8 +9,6 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
-
-	"github.com/symbionix-sl/airstrings-cli/internal/client"
 )
 
 func tokenServer(t *testing.T, replies ...string) (*httptest.Server, *int32) {
@@ -122,14 +120,13 @@ func TestPollLogin_ExpiredStops(t *testing.T) {
 	}
 }
 
-func TestPollLogin_ExpiredTokenCarriesNextStep(t *testing.T) {
+func TestPollLogin_ExpiredTokenReturnsErrLoginExpired(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	srv, _ := tokenServer(t, `{"error":{"code":"expired_token","message":"expired","next_step":"Run airstrings login again"}}`)
 	SaveCreds(&Creds{Pending: pendingFor(srv.URL)})
 	_, err := PollLogin(pendingFor(srv.URL), time.Minute, func(time.Duration) {})
-	var apiErr *client.APIError
-	if !errors.As(err, &apiErr) || apiErr.Body.Error.NextStep == "" || apiErr.ExitCode() != 3 {
-		t.Fatalf("err = %v, want expired_token APIError with next step and exit 3", err)
+	if !errors.Is(err, ErrLoginExpired) {
+		t.Fatalf("err = %v, want ErrLoginExpired", err)
 	}
 	if creds, _ := LoadCreds(); creds.Pending != nil {
 		t.Error("expired pending login kept")

@@ -273,9 +273,16 @@ func pendingRerun(t *testing.T, args ...string) (int, string) {
 	if code != 0 {
 		t.Fatalf("exit = %d\nstderr: %s", code, stderr)
 	}
-	time.Sleep(200 * time.Millisecond)
-	data, _ := os.ReadFile(opened)
-	return code, string(data)
+	return code, string(readOpened(opened, 39))
+}
+
+func readOpened(path string, size int) []byte {
+	var data []byte
+	for i := 0; i < 40 && len(data) < size; i++ {
+		time.Sleep(50 * time.Millisecond)
+		data, _ = os.ReadFile(path)
+	}
+	return data
 }
 
 func TestLoginRerunReopensBrowser(t *testing.T) {
@@ -314,5 +321,38 @@ func TestLoginDevNullIsNonInteractive(t *testing.T) {
 	cmd.Run()
 	if code := cmd.ProcessState.ExitCode(); code != 9 {
 		t.Errorf("exit = %d, want 9 (non-interactive)\nstderr: %s", code, stderr.String())
+	}
+}
+
+func TestLoginRestartsWhenCodeExpiresMidPoll(t *testing.T) {
+	starts := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/cli/auth/start":
+			starts++
+			code := []string{"", "AAAA-AAAA", "BBBB-BBBB"}[starts]
+			w.Write([]byte(`{"device_code":"dc` + code + `","user_code":"` + code + `","verification_uri_complete":"https://app/cli/approve?code=` + code + `","interval":1,"expires_in":600}`))
+		case "/v1/cli/auth/token":
+			var body struct {
+				DeviceCode string `json:"device_code"`
+			}
+			json.NewDecoder(r.Body).Decode(&body)
+			if body.DeviceCode == "dcAAAA-AAAA" {
+				w.WriteHeader(http.StatusBadRequest)
+				w.Write([]byte(`{"error":{"code":"expired_token","message":"expired"}}`))
+				return
+			}
+			w.Write([]byte(`{"api_key":"as_org_new","key_id":"ak_2","org_id":"org_1","org_name":"Acme","full_power":true}`))
+		}
+	}))
+	t.Cleanup(srv.Close)
+	dir := t.TempDir()
+	opened := filepath.Join(dir, "opened")
+	shim := filepath.Join(dir, "browser")
+	os.WriteFile(shim, []byte("#!/bin/sh\necho \"$1\" >> "+opened+"\n"), 0700)
+	code, _, stderr := runSharedInDir(t, dir, []string{"AIRSTRINGS_NO_BROWSER=", "BROWSER=" + shim, "CI="}, "login", "--url", srv.URL)
+	got := readOpened(opened, 78)
+	if code != 0 || starts != 2 || !strings.Contains(stderr, "code=BBBB-BBBB") || len(got) != 78 || !strings.Contains(string(got), "code=AAAA-AAAA\n") || !strings.Contains(string(got), "code=BBBB-BBBB\n") {
+		t.Errorf("exit = %d, starts = %d, opened = %q\nstderr: %s", code, starts, got, stderr)
 	}
 }

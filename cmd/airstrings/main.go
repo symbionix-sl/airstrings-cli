@@ -849,41 +849,46 @@ func parseLoginFlags(args []string) (baseURL string, noBrowser bool) {
 // the approval page unless the browser is disabled. Interactive runs block
 // until approval. Otherwise it polls for up to 90 s, except a first run
 // without an opened browser (or in CI), which exits 9 with the approval URL.
+// An expired code is replaced with a fresh one within the same run.
 func login(baseURL string, noBrowser bool) *workspace.OrgKey {
-	p, fresh, err := workspace.StartLogin(baseURL, client.ClientName(version))
-	if err != nil {
-		var apiErr *client.APIError
-		if errors.Is(err, workspace.ErrCredStore) {
-			output.FailNext(output.ExitAuth, err.Error(), workspace.CredStoreNextStep)
-		}
-		if errors.As(err, &apiErr) && apiErr.StatusCode == 404 {
-			output.FailNext(output.ExitAuth, "this API does not support login yet", "Use: airstrings init <api-key>")
-		}
-		failAPI("start login", err)
-	}
-	if fresh {
-		fmt.Fprintf(os.Stderr, "To log in, open:\n  %s\nand check the code %s. An owner of your AirStrings organization must approve.\n", p.VerificationURIComplete, p.UserCode)
-	}
-	opened := !noBrowser && workspace.OpenBrowser(p.VerificationURIComplete)
 	interactive := isInteractive()
-	budget := workspace.PollBudget
-	if interactive {
-		budget = time.Until(p.ExpiresAt)
-	} else if fresh && (!opened || os.Getenv("CI") != "") {
-		failPending(p)
+	deadline := time.Now().Add(workspace.PollBudget)
+	for {
+		p, fresh, err := workspace.StartLogin(baseURL, client.ClientName(version))
+		if err != nil {
+			var apiErr *client.APIError
+			if errors.Is(err, workspace.ErrCredStore) {
+				output.FailNext(output.ExitAuth, err.Error(), workspace.CredStoreNextStep)
+			}
+			if errors.As(err, &apiErr) && apiErr.StatusCode == 404 {
+				output.FailNext(output.ExitAuth, "this API does not support login yet", "Use: airstrings init <api-key>")
+			}
+			failAPI("start login", err)
+		}
+		if fresh {
+			fmt.Fprintf(os.Stderr, "To log in, open:\n  %s\nand check the code %s. An owner of your AirStrings organization must approve.\n", p.VerificationURIComplete, p.UserCode)
+		}
+		opened := !noBrowser && workspace.OpenBrowser(p.VerificationURIComplete)
+		budget := time.Until(deadline)
+		if interactive {
+			budget = time.Until(p.ExpiresAt)
+		} else if fresh && (!opened || os.Getenv("CI") != "") {
+			failPending(p)
+		}
+		key, err := workspace.PollLogin(p, budget, time.Sleep)
+		switch {
+		case err == nil:
+			return key
+		case errors.Is(err, workspace.ErrLoginExpired), errors.Is(err, workspace.ErrLoginPending) && interactive:
+			continue
+		case errors.Is(err, workspace.ErrLoginPending):
+			failPending(p)
+		case errors.Is(err, workspace.ErrCredStore):
+			output.FailNext(output.ExitAuth, err.Error(), workspace.CredStoreNextStep)
+		default:
+			failAPI("login", err)
+		}
 	}
-	key, err := workspace.PollLogin(p, budget, time.Sleep)
-	switch {
-	case errors.Is(err, workspace.ErrLoginPending) && interactive:
-		output.FailNext(output.ExitAuth, "the login code expired before it was approved", "Run: airstrings login")
-	case errors.Is(err, workspace.ErrLoginPending):
-		failPending(p)
-	case errors.Is(err, workspace.ErrCredStore):
-		output.FailNext(output.ExitAuth, err.Error(), workspace.CredStoreNextStep)
-	case err != nil:
-		failAPI("login", err)
-	}
-	return key
 }
 
 func failPending(p *workspace.PendingLogin) {

@@ -10,7 +10,10 @@ import (
 	"github.com/symbionix-sl/airstrings-cli/internal/client"
 )
 
-var ErrLoginPending = errors.New("login not approved yet")
+var (
+	ErrLoginPending = errors.New("login not approved yet")
+	ErrLoginExpired = errors.New("login code expired")
+)
 
 const PollBudget = 90 * time.Second
 
@@ -87,6 +90,8 @@ func PollLogin(p *PendingLogin, budget time.Duration, sleep func(time.Duration))
 		case "authorization_pending":
 		case "slow_down":
 			interval += 5 * time.Second
+		case "expired_token":
+			return nil, ErrLoginExpired
 		default:
 			return nil, err
 		}
