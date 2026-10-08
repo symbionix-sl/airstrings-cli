@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.20.0] - 2026-10-08
+
+### Added
+
+- Loopback login: when the browser opens on this machine (not with `--no-browser`, `AIRSTRINGS_NO_BROWSER`, `CI`, or over SSH), `login` / keyless `init` listen on `127.0.0.1` and the approval page redirects back to the CLI, so there is no code to check. The CLI sends `redirect_uri` on start and exchanges the returned `grant` on token. A re-run listens on the same port and keeps waiting on the same request; if the port is taken it starts a new login. The "To log in, open:" block omits the code for loopback logins.
+- If an approval can't reach the CLI (`grant_required`) or its grant is rejected (`invalid_grant`), the CLI prints "Approval didn't reach this terminal. Approve again in the browser." (for `grant_required`) and starts a new login within the same 90 s, or exits 9 with the new link.
+
+### Changed
+
+- An API that declines loopback (no `loopback: true`, or a 400/422 on `redirect_uri`) gets today's code-check flow with unchanged output.
+
+### Fixed
+
+- `init --org <org_id>` with an org key from `AIRSTRINGS_ORG_API_KEY` or the command line now checks the key's organization (`GET /v1/org`) before creating anything. A key for another org exits 3 with no project created: "This org key belongs to <name> (<id>), but this setup is for <org_id>. Unset AIRSTRINGS_ORG_API_KEY or use a key for <org_id>." Against an API without `GET /v1/org` the previous behavior applies.
+
 ## [0.19.0] - 2026-10-08
 
 ### Added
