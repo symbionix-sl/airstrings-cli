@@ -36,7 +36,7 @@ func TestStartCLIAuth(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	s, err := New("", srv.URL, "", "").StartCLIAuth(name)
+	s, err := New("", srv.URL, "", "").StartCLIAuth(name, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -65,7 +65,7 @@ func TestPollCLIAuth_PendingIsAPIErrorCode(t *testing.T) {
 	srv := pollServer(t, 400, `{"error":{"code":"authorization_pending","message":"pending"}}`)
 	defer srv.Close()
 
-	_, err := New("", srv.URL, "", "").PollCLIAuth("dc")
+	_, err := New("", srv.URL, "", "").PollCLIAuth("dc", "")
 	var apiErr *APIError
 	if !errors.As(err, &apiErr) || apiErr.Body.Error.Code != "authorization_pending" {
 		t.Fatalf("expected authorization_pending APIError, got %v", err)
@@ -76,7 +76,7 @@ func TestPollCLIAuth_AccessDenied(t *testing.T) {
 	srv := pollServer(t, 400, `{"error":{"code":"access_denied","message":"denied","next_step":"Ask an owner of Acme"}}`)
 	defer srv.Close()
 
-	_, err := New("", srv.URL, "", "").PollCLIAuth("dc")
+	_, err := New("", srv.URL, "", "").PollCLIAuth("dc", "")
 	var apiErr *APIError
 	if !errors.As(err, &apiErr) || apiErr.Body.Error.Code != "access_denied" || apiErr.Body.Error.NextStep != "Ask an owner of Acme" {
 		t.Fatalf("expected access_denied APIError with next_step, got %v", err)
@@ -87,7 +87,7 @@ func TestPollCLIAuth_Approved(t *testing.T) {
 	srv := pollServer(t, 200, `{"api_key":"as_org_k","key_id":"ak_1","org_id":"org_1","org_name":"Acme","full_power":true}`)
 	defer srv.Close()
 
-	tok, err := New("", srv.URL, "", "").PollCLIAuth("dc")
+	tok, err := New("", srv.URL, "", "").PollCLIAuth("dc", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -123,7 +123,7 @@ func TestUserAgentOnEveryRequest(t *testing.T) {
 	old := UserAgent
 	UserAgent = "airstrings-cli/9.9.9"
 	defer func() { UserAgent = old }()
-	New("", srv.URL, "", "").StartCLIAuth("n")
+	New("", srv.URL, "", "").StartCLIAuth("n", "")
 	New("k", srv.URL, "p", "e").CreateImport([]byte("key,locale,value,format\n"), nil)
 	if len(got) != 2 || got[0] != "airstrings-cli/9.9.9" || got[1] != "airstrings-cli/9.9.9" {
 		t.Errorf("User-Agent = %v", got)

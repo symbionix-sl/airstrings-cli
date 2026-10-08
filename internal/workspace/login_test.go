@@ -47,8 +47,8 @@ func pendingFor(baseURL string) *PendingLogin {
 	return &PendingLogin{BaseURL: baseURL, DeviceCode: "dc", UserCode: "BCDF-GHJK", Interval: 5, ExpiresAt: time.Now().Add(10 * time.Minute)}
 }
 
-func recorder(slept *[]time.Duration) func(time.Duration) {
-	return func(d time.Duration) { *slept = append(*slept, d) }
+func recorder(slept *[]time.Duration) func(time.Duration) string {
+	return func(d time.Duration) string { *slept = append(*slept, d); return "" }
 }
 
 func TestPollLogin_PendingThenApproved(t *testing.T) {
@@ -114,7 +114,7 @@ func TestPollLogin_ExpiredStops(t *testing.T) {
 	srv, n := tokenServer(t, pendingReply)
 	p := pendingFor(srv.URL)
 	p.ExpiresAt = time.Now().Add(-time.Second)
-	_, err := PollLogin(p, time.Until(p.ExpiresAt), func(time.Duration) {})
+	_, err := PollLogin(p, time.Until(p.ExpiresAt), func(time.Duration) string { return "" })
 	if !errors.Is(err, ErrLoginPending) || atomic.LoadInt32(n) != 1 {
 		t.Errorf("err = %v after %d polls", err, atomic.LoadInt32(n))
 	}
@@ -124,7 +124,7 @@ func TestPollLogin_ExpiredTokenReturnsErrLoginExpired(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	srv, _ := tokenServer(t, `{"error":{"code":"expired_token","message":"expired","next_step":"Run airstrings login again"}}`)
 	SaveCreds(&Creds{Pending: pendingFor(srv.URL)})
-	_, err := PollLogin(pendingFor(srv.URL), time.Minute, func(time.Duration) {})
+	_, err := PollLogin(pendingFor(srv.URL), time.Minute, func(time.Duration) string { return "" })
 	if !errors.Is(err, ErrLoginExpired) {
 		t.Fatalf("err = %v, want ErrLoginExpired", err)
 	}
@@ -143,7 +143,7 @@ func TestLoginSavesKeyBeforeSetup(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	srv, _ := tokenServer(t, approvedReply)
 	SaveCreds(&Creds{Pending: pendingFor(srv.URL)})
-	if _, err := PollOnce(pendingFor(srv.URL)); err != nil {
+	if _, err := PollOnce(pendingFor(srv.URL), ""); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	creds, _ := LoadCreds()
@@ -169,7 +169,7 @@ func TestReloginRevokesPreviousStoredKey(t *testing.T) {
 	creds.SetOrgKey(OrgKey{BaseURL: srv.URL, OrgID: "org_1", KeyID: "ak_old", APIKey: "as_org_old"})
 	SaveCreds(creds)
 
-	if _, err := PollOnce(pendingFor(srv.URL)); err != nil {
+	if _, err := PollOnce(pendingFor(srv.URL), ""); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if revoked != "/v1/org/api-keys/ak_old" || revokedWith != "as_org_old" {
@@ -191,7 +191,7 @@ func TestLoginOtherOrgKeepsBothKeysAndRevokesNothing(t *testing.T) {
 	creds.SetOrgKey(OrgKey{BaseURL: srv.URL, OrgID: "org_a", KeyID: "ak_a", APIKey: "as_org_a", CreatedAt: time.Now().Add(-time.Hour)})
 	SaveCreds(creds)
 
-	if _, err := PollOnce(pendingFor(srv.URL)); err != nil {
+	if _, err := PollOnce(pendingFor(srv.URL), ""); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if revoked {
@@ -220,7 +220,7 @@ func TestStartLogin_ReadOnlyStoreFailsBeforeStart(t *testing.T) {
 	t.Cleanup(func() { os.Chmod(dir, 0700) })
 	t.Setenv("XDG_CONFIG_HOME", dir)
 
-	if _, _, err := StartLogin(srv.URL, "test"); !errors.Is(err, ErrCredStore) {
+	if _, _, _, err := StartLogin(srv.URL, "test", false); !errors.Is(err, ErrCredStore) {
 		t.Fatalf("err = %v, want ErrCredStore", err)
 	}
 	if hits != 0 {
@@ -237,11 +237,11 @@ func TestStartLogin_ReusesUnexpiredPending(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	p1, fresh1, err := StartLogin(srv.URL, "test")
+	p1, fresh1, _, err := StartLogin(srv.URL, "test", false)
 	if err != nil || !fresh1 {
 		t.Fatalf("first start: %+v %v %v", p1, fresh1, err)
 	}
-	p2, fresh2, _ := StartLogin(srv.URL, "test")
+	p2, fresh2, _, _ := StartLogin(srv.URL, "test", false)
 	if fresh2 || p2.DeviceCode != "dc" || hits != 1 {
 		t.Errorf("second start fresh=%v hits=%d", fresh2, hits)
 	}

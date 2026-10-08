@@ -2,12 +2,16 @@ package main
 
 import (
 	"encoding/json"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -354,5 +358,271 @@ func TestLoginRestartsWhenCodeExpiresMidPoll(t *testing.T) {
 	got := readOpened(opened, 78)
 	if code != 0 || starts != 2 || !strings.Contains(stderr, "code=BBBB-BBBB") || len(got) != 78 || !strings.Contains(string(got), "code=AAAA-AAAA\n") || !strings.Contains(string(got), "code=BBBB-BBBB\n") {
 		t.Errorf("exit = %d, starts = %d, opened = %q\nstderr: %s", code, starts, got, stderr)
+	}
+}
+
+type loopbackAPI struct {
+	srv       *httptest.Server
+	mu        sync.Mutex
+	redirects []string
+}
+
+func (a *loopbackAPI) seen() []string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return append([]string(nil), a.redirects...)
+}
+
+func startReplyFor(n int, loopback string) string {
+	dc := "dc" + strconv.Itoa(n)
+	if loopback == "true" {
+		dc = "dcloop" + strconv.Itoa(n)
+	}
+	reply := `{"device_code":"` + dc + `","user_code":"BCDF-GHJK","verification_uri":"https://app/cli/approve","verification_uri_complete":"https://app/cli/approve?code=BCDF-GHJK","interval":1,"expires_in":600`
+	if loopback != "" {
+		reply += `,"loopback":` + loopback
+	}
+	return reply + "}"
+}
+
+func confirmLoopback(redirect string, n int) (int, string) {
+	if redirect != "" {
+		return 200, startReplyFor(n, "true")
+	}
+	return 200, startReplyFor(n, "")
+}
+
+func newLoopbackAPI(t *testing.T, start func(redirect string, n int) (int, string), token func(deviceCode, grant string) (int, string)) *loopbackAPI {
+	a := &loopbackAPI{}
+	a.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			RedirectURI string `json:"redirect_uri"`
+			DeviceCode  string `json:"device_code"`
+			Grant       string `json:"grant"`
+		}
+		json.NewDecoder(r.Body).Decode(&body)
+		w.Header().Set("Content-Type", "application/json")
+		status, reply := 200, `{"api_key":"as_org_new","key_id":"ak_2","org_id":"org_1","org_name":"Acme","full_power":true}`
+		switch {
+		case r.URL.Path == "/v1/cli/auth/start":
+			a.mu.Lock()
+			a.redirects = append(a.redirects, body.RedirectURI)
+			n := len(a.redirects)
+			a.mu.Unlock()
+			status, reply = start(body.RedirectURI, n)
+		case body.Grant == "g1":
+		case token != nil:
+			status, reply = token(body.DeviceCode, body.Grant)
+		case strings.HasPrefix(body.DeviceCode, "dcloop"):
+			status, reply = 400, `{"error":{"code":"authorization_pending","message":"pending"}}`
+		}
+		w.WriteHeader(status)
+		w.Write([]byte(reply))
+	}))
+	t.Cleanup(a.srv.Close)
+	return a
+}
+
+var browserEnv = []string{"AIRSTRINGS_NO_BROWSER=", "BROWSER=true", "CI=", "SSH_CONNECTION=", "SSH_TTY="}
+
+func startLogin(t *testing.T, xdg string, env []string, args ...string) (*exec.Cmd, *strings.Builder) {
+	cmd := exec.Command(binPath, append([]string{"login"}, args...)...)
+	cmd.Dir = t.TempDir()
+	cmd.Env = append(append(scrubbedEnv(), env...), "XDG_CONFIG_HOME="+xdg)
+	stderr := &strings.Builder{}
+	cmd.Stderr = stderr
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { cmd.Process.Kill() })
+	return cmd, stderr
+}
+
+var noFollow = &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+
+func callback(url string) (*http.Response, error) {
+	var resp *http.Response
+	var err error
+	for i := 0; i < 100; i++ {
+		if resp, err = noFollow.Get(url); err == nil {
+			return resp, nil
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	return resp, err
+}
+
+func TestLoginLoopbackCallbackExchangesGrant(t *testing.T) {
+	api := newLoopbackAPI(t, confirmLoopback, nil)
+	xdg := t.TempDir()
+	cmd, stderr := startLogin(t, xdg, browserEnv, "--url", api.srv.URL)
+	var redirect string
+	for i := 0; i < 100 && redirect == ""; i++ {
+		time.Sleep(20 * time.Millisecond)
+		if seen := api.seen(); len(seen) > 0 {
+			redirect = seen[0]
+		}
+	}
+	if !regexp.MustCompile(`^http://127\.0\.0\.1:\d+/callback$`).MatchString(redirect) {
+		t.Fatalf("redirect_uri = %q", redirect)
+	}
+	if resp, err := callback(redirect + "?nope=1"); err != nil || resp.StatusCode == http.StatusFound {
+		t.Errorf("callback without grant accepted: %v %v", resp, err)
+	}
+	resp, err := callback(redirect + "?grant=g1")
+	if err != nil || resp.StatusCode != http.StatusFound || resp.Header.Get("Location") != "https://app/cli/approve?done=1" {
+		t.Fatalf("callback = %v %v", resp, err)
+	}
+	if err := cmd.Wait(); err != nil {
+		t.Fatalf("login: %v\nstderr: %s", err, stderr)
+	}
+	if keys, _ := readCreds(t, xdg)["org_keys"].([]any); len(keys) != 1 {
+		t.Errorf("key not stored: %v", readCreds(t, xdg))
+	}
+	if !strings.Contains(stderr.String(), "To log in, open:\n  https://app/cli/approve?code=BCDF-GHJK\nAn owner") || strings.Contains(stderr.String(), "check the code") {
+		t.Errorf("stderr: %s", stderr)
+	}
+	if _, err := noFollow.Get(redirect + "?grant=g1"); err == nil {
+		t.Error("listener still open after login")
+	}
+}
+
+func rejectRedirect(status int, body string) func(string, int) (int, string) {
+	return func(r string, n int) (int, string) {
+		if r != "" {
+			return status, body
+		}
+		return 200, startReplyFor(n, "")
+	}
+}
+
+func TestLoginLoopbackFallsBackToDeviceFlow(t *testing.T) {
+	for name, tc := range map[string]struct {
+		start  func(string, int) (int, string)
+		starts int
+	}{
+		"older backend":            {func(_ string, n int) (int, string) { return 200, startReplyFor(n, "") }, 1},
+		"declined":                 {func(_ string, n int) (int, string) { return 200, startReplyFor(n, "false") }, 1},
+		"prod 400 unknown field":   {rejectRedirect(400, `{"error":{"code":"bad_request","message":"Invalid JSON body"}}`), 2},
+		"422 invalid redirect_uri": {rejectRedirect(422, `{"error":{"code":"validation_error","message":"invalid redirect_uri"}}`), 2},
+	} {
+		api := newLoopbackAPI(t, tc.start, nil)
+		code, stdout, stderr := runSharedInDir(t, t.TempDir(), browserEnv, "login", "--url", api.srv.URL, "--json")
+		seen := api.seen()
+		if code != 0 || len(seen) != tc.starts || seen[0] == "" || seen[len(seen)-1] != "" && tc.starts == 2 || !strings.Contains(stderr, "To log in, open:\n  https://app/cli/approve?code=BCDF-GHJK\nand check the code BCDF-GHJK. An owner") {
+			t.Errorf("%s: exit = %d, starts = %q\nstdout: %s\nstderr: %s", name, code, seen, stdout, stderr)
+		}
+	}
+}
+
+func TestLoginOverSSHSkipsLoopback(t *testing.T) {
+	for _, ssh := range []string{"SSH_CONNECTION=10.0.0.1 22 10.0.0.2 22", "SSH_TTY=/dev/ttys001"} {
+		api := newLoopbackAPI(t, confirmLoopback, nil)
+		code, _, stderr := runSharedInDir(t, t.TempDir(), append(append([]string(nil), browserEnv...), ssh), "login", "--url", api.srv.URL, "--json")
+		if seen := api.seen(); code != 0 || len(seen) != 1 || seen[0] != "" {
+			t.Errorf("%s: exit = %d, redirect_uri = %q\nstderr: %s", ssh, code, seen, stderr)
+		}
+	}
+}
+
+func freePort(t *testing.T) (int, net.Listener) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return l.Addr().(*net.TCPAddr).Port, l
+}
+
+func storeLoopbackPending(t *testing.T, xdg, baseURL string, port int) {
+	os.MkdirAll(filepath.Join(xdg, "airstrings"), 0700)
+	pending := `{"org_keys":[],"pending":{"base_url":"` + baseURL + `","device_code":"dcloop0","user_code":"BCDF-GHJK","loopback_port":` + strconv.Itoa(port) + `,` +
+		`"verification_uri_complete":"https://app/cli/approve?code=BCDF-GHJK","interval":1,"expires_at":"` + time.Now().Add(time.Hour).UTC().Format(time.RFC3339) + `"}}`
+	if err := os.WriteFile(filepath.Join(xdg, "airstrings", "credentials.json"), []byte(pending), 0600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestLoginRerunWithLoopbackPendingRebindsSamePort(t *testing.T) {
+	api := newLoopbackAPI(t, confirmLoopback, nil)
+	xdg := t.TempDir()
+	port, l := freePort(t)
+	l.Close()
+	storeLoopbackPending(t, xdg, api.srv.URL, port)
+	cmd, stderr := startLogin(t, xdg, browserEnv, "--url", api.srv.URL)
+	resp, err := callback("http://127.0.0.1:" + strconv.Itoa(port) + "/callback?grant=g1")
+	if err != nil || resp.StatusCode != http.StatusFound {
+		t.Fatalf("callback = %v %v\nstderr: %s", resp, err, stderr)
+	}
+	if err := cmd.Wait(); err != nil || len(api.seen()) != 0 {
+		t.Errorf("login: %v, starts = %d\nstderr: %s", err, len(api.seen()), stderr)
+	}
+}
+
+func TestLoginRerunWithLoopbackPendingPortTakenStartsFresh(t *testing.T) {
+	api := newLoopbackAPI(t, func(_ string, n int) (int, string) { return 200, startReplyFor(n, "") }, nil)
+	xdg := t.TempDir()
+	port, l := freePort(t)
+	defer l.Close()
+	storeLoopbackPending(t, xdg, api.srv.URL, port)
+	code, _, stderr := runSharedInDir(t, t.TempDir(), append(browserEnv, "XDG_CONFIG_HOME="+xdg), "login", "--url", api.srv.URL)
+	if code != 0 || len(api.seen()) != 1 {
+		t.Errorf("exit = %d, starts = %d\nstderr: %s", code, len(api.seen()), stderr)
+	}
+}
+
+func TestLoginGrantRequiredRestartsAndReopens(t *testing.T) {
+	start := func(r string, n int) (int, string) {
+		if n == 1 {
+			return confirmLoopback(r, n)
+		}
+		return 200, startReplyFor(n, "")
+	}
+	api := newLoopbackAPI(t, start, func(dc, _ string) (int, string) {
+		if dc == "dcloop1" {
+			return 400, `{"error":{"code":"grant_required","message":"approved without a grant"}}`
+		}
+		return 200, `{"api_key":"as_org_new","key_id":"ak_2","org_id":"org_1","org_name":"Acme","full_power":true}`
+	})
+	dir := t.TempDir()
+	opened := filepath.Join(dir, "opened")
+	shim := filepath.Join(dir, "browser")
+	os.WriteFile(shim, []byte("#!/bin/sh\necho \"$1\" >> "+opened+"\n"), 0700)
+	env := append(append([]string(nil), browserEnv...), "BROWSER="+shim)
+	code, _, stderr := runSharedInDir(t, dir, env, "login", "--url", api.srv.URL)
+	got := readOpened(opened, 78)
+	if code != 0 || len(api.seen()) != 2 || strings.Count(stderr, "Approval didn't reach this terminal. Approve again in the browser.\n") != 1 || len(got) != 78 {
+		t.Errorf("exit = %d, starts = %d, opened = %q\nstderr: %s", code, len(api.seen()), got, stderr)
+	}
+}
+
+func TestLoginLoopbackInvalidGrantRestarts(t *testing.T) {
+	start := func(r string, n int) (int, string) {
+		if n == 1 {
+			return confirmLoopback(r, n)
+		}
+		return 200, startReplyFor(n, "")
+	}
+	api := newLoopbackAPI(t, start, func(dc, grant string) (int, string) {
+		switch {
+		case grant == "bad":
+			return 400, `{"error":{"code":"invalid_grant","message":"wrong grant"}}`
+		case dc == "dcloop1":
+			return 400, `{"error":{"code":"authorization_pending","message":"pending"}}`
+		}
+		return 200, `{"api_key":"as_org_new","key_id":"ak_2","org_id":"org_1","org_name":"Acme","full_power":true}`
+	})
+	cmd, stderr := startLogin(t, t.TempDir(), browserEnv, "--url", api.srv.URL)
+	var redirect string
+	for i := 0; i < 100 && redirect == ""; i++ {
+		time.Sleep(20 * time.Millisecond)
+		if seen := api.seen(); len(seen) > 0 {
+			redirect = seen[0]
+		}
+	}
+	if resp, err := callback(redirect + "?grant=bad"); err != nil || resp.StatusCode != http.StatusFound {
+		t.Fatalf("callback = %v %v", resp, err)
+	}
+	if err := cmd.Wait(); err != nil || len(api.seen()) != 2 {
+		t.Errorf("login: %v, starts = %d\nstderr: %s", err, len(api.seen()), stderr)
 	}
 }

@@ -9,6 +9,7 @@ type CLIAuthStart struct {
 	VerificationURIComplete string `json:"verification_uri_complete"`
 	Interval                int    `json:"interval"`
 	ExpiresIn               int    `json:"expires_in"`
+	Loopback                bool   `json:"loopback"`
 }
 
 type CLIAuthToken struct {
@@ -29,16 +30,25 @@ func ClientName(version string) string {
 	return string(name)
 }
 
-func (c *Client) StartCLIAuth(clientName string) (*CLIAuthStart, error) {
+func (c *Client) StartCLIAuth(clientName, redirectURI string) (*CLIAuthStart, error) {
 	var s CLIAuthStart
-	err := c.do("POST", "/v1/cli/auth/start", nil, map[string]string{"client_name": clientName}, &s)
+	body := map[string]string{"client_name": clientName}
+	if redirectURI != "" {
+		body["redirect_uri"] = redirectURI
+	}
+	err := c.do("POST", "/v1/cli/auth/start", nil, body, &s)
 	return &s, err
 }
 
-// PollCLIAuth redeems an approved device code; pending states come back as *APIError codes.
-func (c *Client) PollCLIAuth(deviceCode string) (*CLIAuthToken, error) {
+// PollCLIAuth redeems an approved device code (with the loopback grant, if
+// any); pending states come back as *APIError codes.
+func (c *Client) PollCLIAuth(deviceCode, grant string) (*CLIAuthToken, error) {
 	var t CLIAuthToken
-	err := c.do("POST", "/v1/cli/auth/token", nil, map[string]string{"device_code": deviceCode}, &t)
+	body := map[string]string{"device_code": deviceCode}
+	if grant != "" {
+		body["grant"] = grant
+	}
+	err := c.do("POST", "/v1/cli/auth/token", nil, body, &t)
 	return &t, err
 }
 

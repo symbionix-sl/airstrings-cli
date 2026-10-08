@@ -311,7 +311,7 @@ func login(baseURL, org string) (*workspace.OrgKey, *CallToolResult) {
 	if baseURL == "" {
 		baseURL = client.DefaultBaseURL
 	}
-	p, fresh, err := workspace.StartLogin(baseURL, client.ClientName(version))
+	p, fresh, _, err := workspace.StartLogin(baseURL, client.ClientName(version), false)
 	if err != nil {
 		return nil, errorResult(fmt.Sprintf("start login: %s", err))
 	}

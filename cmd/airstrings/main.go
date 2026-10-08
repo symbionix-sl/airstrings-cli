@@ -883,8 +883,9 @@ func parseLoginFlags(args []string) (baseURL string, noBrowser bool, org string)
 func login(baseURL, org string, noBrowser bool) *workspace.OrgKey {
 	interactive := isInteractive()
 	deadline := time.Now().Add(workspace.PollBudget)
+	loopback := !noBrowser && os.Getenv("AIRSTRINGS_NO_BROWSER") == "" && os.Getenv("CI") == "" && os.Getenv("SSH_CONNECTION") == "" && os.Getenv("SSH_TTY") == ""
 	for {
-		p, fresh, err := workspace.StartLogin(baseURL, client.ClientName(version))
+		p, fresh, l, err := workspace.StartLogin(baseURL, client.ClientName(version), loopback)
 		if err != nil {
 			var apiErr *client.APIError
 			if errors.Is(err, workspace.ErrCredStore) {
@@ -896,7 +897,13 @@ func login(baseURL, org string, noBrowser bool) *workspace.OrgKey {
 			failAPI("start login", err)
 		}
 		p.Org = org
-		if fresh {
+		var grants <-chan string
+		if l != nil {
+			grants = workspace.ServeLoopback(l, p.VerificationURIComplete)
+		}
+		if fresh && l != nil {
+			fmt.Fprintf(os.Stderr, "To log in, open:\n  %s\nAn owner of your AirStrings organization must approve.\n", p.VerificationURIComplete)
+		} else if fresh {
 			fmt.Fprintf(os.Stderr, "To log in, open:\n  %s\nand check the code %s. An owner of your AirStrings organization must approve.\n", p.VerificationURIComplete, p.UserCode)
 		}
 		opened := !noBrowser && workspace.OpenBrowser(p.VerificationURIComplete)
@@ -906,10 +913,16 @@ func login(baseURL, org string, noBrowser bool) *workspace.OrgKey {
 		} else if fresh && (!opened || os.Getenv("CI") != "") {
 			failPending(p)
 		}
-		key, err := workspace.PollLogin(p, budget, time.Sleep)
+		key, err := workspace.PollLogin(p, budget, workspace.WaitForGrant(grants))
+		if l != nil {
+			l.Close()
+		}
 		switch {
 		case err == nil:
 			return key
+		case errors.Is(err, workspace.ErrGrantLost):
+			fmt.Fprintln(os.Stderr, "Approval didn't reach this terminal. Approve again in the browser.")
+			continue
 		case errors.Is(err, workspace.ErrLoginExpired), errors.Is(err, workspace.ErrLoginPending) && interactive:
 			continue
 		case errors.Is(err, workspace.ErrLoginPending):
