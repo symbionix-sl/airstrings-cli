@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/symbionix-sl/airstrings-cli/internal/client"
 )
@@ -194,5 +195,43 @@ func TestResolve_OrgScopedOpUsesOrgKeyOverWorkspaceKey(t *testing.T) {
 	t.Setenv("AIRSTRINGS_ORG_API_KEY", "as_org_env")
 	if auth, _ := OrgAuth(nil); auth.Key != "as_org_env" {
 		t.Errorf("OrgAuth() = %+v, want env org key", auth)
+	}
+}
+
+func TestResolveAuth_WorkspaceOrgPicksThatOrgsKeyAmongSeveral(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	creds := &Creds{}
+	creds.SetOrgKey(OrgKey{BaseURL: client.DefaultBaseURL, OrgID: "org_1", APIKey: "as_org_one", CreatedAt: time.Now().Add(-time.Hour)})
+	creds.SetOrgKey(OrgKey{BaseURL: client.DefaultBaseURL, OrgID: "org_2", APIKey: "as_org_two", CreatedAt: time.Now()})
+	SaveCreds(creds)
+	if auth, _ := ResolveAuth(wsWithKey("")); auth.Key != "as_org_one" {
+		t.Errorf("ResolveAuth(org_1 workspace) = %q, want as_org_one", auth.Key)
+	}
+	if auth, _ := OrgAuth(wsWithKey("")); auth.Key != "as_org_one" {
+		t.Errorf("OrgAuth(org_1 workspace) = %q, want as_org_one", auth.Key)
+	}
+	if auth, _ := ResolveAuth(nil); auth.Key != "as_org_two" {
+		t.Errorf("ResolveAuth(no workspace) = %q, want the most recent", auth.Key)
+	}
+}
+
+func TestResolveAuth_ActiveOrgOutsideWorkspaceOnly(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	creds := &Creds{}
+	creds.SetOrgKey(OrgKey{BaseURL: client.DefaultBaseURL, OrgID: "org_1", APIKey: "as_org_one", CreatedAt: time.Now().Add(-time.Hour)})
+	creds.SetOrgKey(OrgKey{BaseURL: client.DefaultBaseURL, OrgID: "org_2", APIKey: "as_org_two", CreatedAt: time.Now().Add(-2 * time.Hour)})
+	creds.SetOrgKey(OrgKey{BaseURL: client.DefaultBaseURL, OrgID: "org_3", APIKey: "as_org_three", CreatedAt: time.Now()})
+	if _, err := creds.UseOrg(client.DefaultBaseURL, "org_2"); err != nil {
+		t.Fatal(err)
+	}
+	SaveCreds(creds)
+	if auth, _ := ResolveAuth(nil); auth.Key != "as_org_two" {
+		t.Errorf("ResolveAuth(no workspace) = %q, want the active org", auth.Key)
+	}
+	if auth, _ := ResolveAuth(wsWithKey("")); auth.Key != "as_org_one" {
+		t.Errorf("ResolveAuth(org_1 workspace) = %q, want the workspace org", auth.Key)
+	}
+	if _, err := creds.UseOrg(client.DefaultBaseURL, "org_9"); err == nil {
+		t.Error("UseOrg accepted an unknown org")
 	}
 }

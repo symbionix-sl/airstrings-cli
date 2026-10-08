@@ -80,6 +80,8 @@ func main() {
 		handleStatus(args)
 	case "project":
 		handleProject(args)
+	case "org":
+		handleOrg(args)
 	case "env":
 		handleEnv(args)
 	case "envs": // backward compat
@@ -138,9 +140,14 @@ Setup:
   init [<api-key>] [--name <name>]      Bind this folder to a project. With no key
        [--url <base-url>] [--purge]     it logs in and creates a project named
                                         after the folder (--project to reuse one)
-  login [--no-browser]                  Log in through the browser; stores an
+  init --org <org-id>                   Bind to that organization (logs in to it
+                                        if needed; re-links a folder of another org)
+  login [--no-browser] [--org <id>]     Log in through the browser; stores an
                                         org key in ~/.config/airstrings
-  logout                                Revoke and forget the stored org key
+  logout [--org <id>]                   Revoke and forget the active (or given)
+                                        org's key
+  org                                   List stored logins (✓ = active)
+  org use <name|id>                     Set the active org (outside workspaces)
   status                                Show active project, environment, and key
 
 Navigation:
@@ -263,7 +270,7 @@ Exit codes:
 }
 
 var commandHelp = map[string]string{
-	"init": `Usage: airstrings init [<api-key>] [--name <name>] [--url <base-url>] [--purge]
+	"init": `Usage: airstrings init [<api-key>] [--org <org-id>] [--name <name>] [--url <base-url>] [--purge]
 
 Bind this folder to a project and write .airstrings/config.json.
 
@@ -279,21 +286,32 @@ approval. With --no-browser or CI, or on timeout, it exits 9 with the URL:
 approve, then re-run the same command.
 
 Flags:
+  --org <org-id>            Bind to this organization: use its stored login
+                            or log in (an approval from another org exits 3).
+                            A folder linked to another org gets a new project
+                            in <org-id>; local .airstrings/ is replaced
   --name <name>             Name for the created project
   --url, --base-url <url>   API base URL (default https://api.airstrings.com)
   --no-browser              Print the login URL without opening a browser
   --purge                   Re-init and remove local strings
 `,
-	"login": `Usage: airstrings login [--no-browser] [--url <base-url>]
+	"login": `Usage: airstrings login [--no-browser] [--org <org-id>] [--url <base-url>]
 
 Log in through the browser. An owner of the organization approves the request,
-then an org key is stored in ~/.config/airstrings/credentials.json (0600).
-Logging in again revokes the previous key. Without a terminal it waits up to
-90 s; with --no-browser or CI, or on timeout, it exits 9 with the URL.
+then an org key is stored in ~/.config/airstrings/credentials.json (0600), one
+per organization, and that org becomes active. Logging in again to the same org
+revokes its previous key. With --org, an approval from another org exits 3.
+Without a terminal it waits up to 90 s; with --no-browser or CI, or on timeout,
+it exits 9 with the URL.
 `,
-	"logout": `Usage: airstrings logout [--url <base-url>]
+	"logout": `Usage: airstrings logout [--org <org-id>] [--url <base-url>]
 
-Revoke the stored org key and remove it from credentials.json.
+Revoke the active org's key (or --org's) and remove it from credentials.json.
+`,
+	"org": `Usage: airstrings org [use <name|id>] [--url <base-url>]
+
+List the stored logins for the API URL (✓ = active). "org use" sets the active
+org, used outside workspaces; a workspace always uses its own org's login.
 `,
 	"status": `Usage: airstrings status
 
@@ -719,6 +737,8 @@ func printStatus(wsDir string, wsCfg *workspace.WorkspaceConfig) {
 			"mode":              workspace.DetectMode(wsDir),
 			"project_id":        wsCfg.ProjectID,
 			"project_name":      wsCfg.ProjectName,
+			"org_id":            wsCfg.OrgID,
+			"org_name":          workspace.OrgName(wsCfg.OrgID),
 			"env_id":            cred.EnvID,
 			"env_name":          cred.EnvName,
 			"base_url":          url,
@@ -734,6 +754,9 @@ func printStatus(wsDir string, wsCfg *workspace.WorkspaceConfig) {
 		return
 	}
 
+	if wsCfg.OrgID != "" {
+		fmt.Printf("Org:      %s (%s)\n", client.StripControl(workspace.OrgName(wsCfg.OrgID)), wsCfg.OrgID)
+	}
 	fmt.Printf("Project:  %s (%s)\n", wsCfg.ProjectName, wsCfg.ProjectID)
 	fmt.Printf("Env:      %s (%s)\n", cred.EnvName, cred.EnvID)
 	fmt.Printf("API URL:  %s\n", url)
@@ -811,8 +834,11 @@ func handleProjectLs() {
 }
 
 func handleLogin(args []string) {
-	baseURL, noBrowser := parseLoginFlags(args)
+	baseURL, noBrowser, org := parseLoginFlags(args)
 	key := login(baseURL, noBrowser)
+	if org != "" && key.OrgID != org {
+		output.Fail(output.ExitAuth, "%s", workspace.WrongOrgMessage(key, org))
+	}
 	if output.JSONMode {
 		output.JSON(map[string]any{"status": "logged_in", "org_id": key.OrgID, "org_name": key.OrgName, "full_power": key.FullPower, "base_url": key.BaseURL})
 		return
@@ -820,16 +846,20 @@ func handleLogin(args []string) {
 	output.Success(fmt.Sprintf("Logged in to %s", client.StripControl(key.OrgName)))
 }
 
-func parseLoginFlags(args []string) (baseURL string, noBrowser bool) {
+func parseLoginFlags(args []string) (baseURL string, noBrowser bool, org string) {
 	baseURL = os.Getenv("AIRSTRINGS_BASE_URL")
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
-		case "--url", "--base-url":
+		case "--url", "--base-url", "--org":
 			if i+1 >= len(args) {
 				output.Fail(output.ExitUsage, "%s requires a value", args[i])
 			}
 			i++
-			baseURL = args[i]
+			if args[i-1] == "--org" {
+				org = args[i]
+			} else {
+				baseURL = args[i]
+			}
 		case "--no-browser":
 			noBrowser = true
 		default:
@@ -842,7 +872,7 @@ func parseLoginFlags(args []string) (baseURL string, noBrowser bool) {
 	if err := client.ValidateBaseURL(baseURL); err != nil {
 		output.Fail(output.ExitUsage, "%s", err)
 	}
-	return baseURL, noBrowser
+	return baseURL, noBrowser, org
 }
 
 // login runs the device flow and returns the stored org key. Every run opens
@@ -914,19 +944,76 @@ func isInteractive() bool {
 	return stdinIsTTY() && output.IsTerminal(os.Stdout) && !output.JSONMode && os.Getenv("CI") == ""
 }
 
+func handleOrg(args []string) {
+	use := len(args) > 0 && args[0] == "use"
+	if use && (len(args) < 2 || strings.HasPrefix(args[1], "-")) {
+		output.Fail(output.ExitUsage, "usage: airstrings org use <name|id>")
+	}
+	rest := args
+	if use {
+		rest = args[2:]
+	}
+	baseURL, _, _ := parseLoginFlags(rest)
+	creds, err := workspace.LoadCreds()
+	if err != nil {
+		output.Errorf("%s", err)
+	}
+	if use {
+		k, err := creds.UseOrg(baseURL, args[1])
+		if err != nil {
+			failResolve(err)
+		}
+		if err := workspace.SaveCreds(creds); err != nil {
+			output.FailNext(output.ExitAuth, err.Error(), workspace.CredStoreNextStep)
+		}
+		if output.JSONMode {
+			output.JSON(map[string]any{"active_org": k.OrgID, "org_name": k.OrgName, "base_url": baseURL})
+			return
+		}
+		output.Success(fmt.Sprintf("Active org: %s (%s)", client.StripControl(k.OrgName), k.OrgID))
+		return
+	}
+	var active string
+	if k := creds.OrgKey(baseURL, ""); k != nil {
+		active = k.OrgID
+	}
+	list := []map[string]any{}
+	var rows [][]string
+	for _, k := range creds.OrgKeys {
+		if k.BaseURL != baseURL {
+			continue
+		}
+		list = append(list, map[string]any{"org_id": k.OrgID, "org_name": k.OrgName, "full_power": k.FullPower, "active": k.OrgID == active})
+		mark := ""
+		if k.OrgID == active {
+			mark = "✓"
+		}
+		rows = append(rows, []string{client.StripControl(k.OrgName), k.OrgID, strconv.FormatBool(k.FullPower), mark})
+	}
+	if output.JSONMode {
+		output.JSON(list)
+		return
+	}
+	if len(rows) == 0 {
+		fmt.Println("Not logged in. Run: airstrings login")
+		return
+	}
+	output.Table([]string{"NAME", "ID", "FULL POWER", "ACTIVE"}, rows)
+}
+
 func handleLogout(args []string) {
-	baseURL, _ := parseLoginFlags(args)
+	baseURL, _, org := parseLoginFlags(args)
 	creds, err := workspace.LoadCreds()
 	if err != nil {
 		output.Errorf("%s", err)
 	}
 	creds.Pending = nil
-	k := creds.OrgKey(baseURL)
+	k := creds.OrgKey(baseURL, org)
 	if k != nil {
 		if err := client.New(k.APIKey, baseURL, "", "").RevokeOrgKey(k.KeyID); err != nil {
 			output.Warnf("could not revoke the key on the server (%s); an owner can delete it in the dashboard", err)
 		}
-		creds.DeleteOrgKey(baseURL)
+		creds.DeleteOrgKey(baseURL, k.OrgID)
 	}
 	if err := workspace.SaveCreds(creds); err != nil {
 		output.FailNext(output.ExitAuth, err.Error(), workspace.CredStoreNextStep)
@@ -2989,7 +3076,7 @@ func describeWorkspace(wsDir string) (projName, envName string) {
 
 func handleInit(args []string) {
 	var purge, noBrowser bool
-	var apiKey, name string
+	var apiKey, name, org string
 	baseURL := os.Getenv("AIRSTRINGS_BASE_URL")
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
@@ -2997,14 +3084,17 @@ func handleInit(args []string) {
 			purge = true
 		case "--no-browser":
 			noBrowser = true
-		case "--url", "--base-url", "--name":
+		case "--url", "--base-url", "--name", "--org":
 			if i+1 >= len(args) {
 				output.Fail(output.ExitUsage, "%s requires a value", args[i])
 			}
 			i++
-			if args[i-1] == "--name" {
+			switch args[i-1] {
+			case "--name":
 				name = args[i]
-			} else {
+			case "--org":
+				org = args[i]
+			default:
 				baseURL = args[i]
 			}
 		default:
@@ -3034,7 +3124,7 @@ func handleInit(args []string) {
 			}
 		} else if old, err := workspace.LoadConfig(wsDir); err == nil && client.KeyType(apiKey) == "project" {
 			rebind = old.ProjectID
-		} else {
+		} else if err != nil || org == "" || old.OrgID == "" || old.OrgID == org {
 			projName, envName := describeWorkspace(wsDir)
 			if apiKey == "" && name == "" && workspace.ProjectFlag == "" {
 				if output.JSONMode {
@@ -3051,7 +3141,7 @@ func handleInit(args []string) {
 		}
 	}
 
-	opts := workspace.SetupOptions{APIKey: apiKey, BaseURL: baseURL, Name: name, Project: workspace.ProjectFlag}
+	opts := workspace.SetupOptions{APIKey: apiKey, BaseURL: baseURL, Name: name, Project: workspace.ProjectFlag, Org: org}
 	if rebind != "" {
 		opts.Project = rebind
 	}
@@ -3061,8 +3151,13 @@ func handleInit(args []string) {
 		if loginURL == "" {
 			loginURL = client.DefaultBaseURL
 		}
-		login(loginURL, noBrowser)
+		if k := login(loginURL, noBrowser); org != "" && k.OrgID != org {
+			output.Fail(output.ExitAuth, "%s", workspace.WrongOrgMessage(k, org))
+		}
 		res, err = workspace.Setup(cwd, opts)
+	}
+	if errors.Is(err, workspace.ErrWrongOrg) {
+		output.Fail(output.ExitAuth, "%s", err)
 	}
 	var usage *workspace.UsageError
 	if rebind != "" && errors.As(err, &usage) {
@@ -3081,6 +3176,9 @@ func handleInit(args []string) {
 		"environments": res.Environments,
 		"sections":     res.Sections,
 	}
+	if res.RelinkedFrom != "" {
+		out["relinked_from"] = res.RelinkedFrom
+	}
 	var prod client.SDKEnvironment
 	if res.SDK != nil {
 		for _, e := range res.SDK.Environments {
@@ -3095,6 +3193,9 @@ func handleInit(args []string) {
 		return
 	}
 
+	if res.RelinkedFrom != "" {
+		fmt.Printf("This folder was linked to %s; re-linked to %s.\n", client.StripControl(workspace.OrgName(res.RelinkedFrom)), client.StripControl(workspace.OrgName(org)))
+	}
 	verb := "Workspace initialized for"
 	if res.Created {
 		verb = "Created project and initialized workspace for"

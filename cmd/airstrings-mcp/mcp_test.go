@@ -1116,7 +1116,7 @@ func TestMCP_LoginReturnsPendingThenApproved(t *testing.T) {
 		t.Fatalf("second call = %+v", second)
 	}
 	creds, _ := workspace.LoadCreds()
-	if k := creds.OrgKey(srv.URL); k == nil || k.APIKey != "as_org_new" || creds.Pending != nil {
+	if k := creds.OrgKey(srv.URL, ""); k == nil || k.APIKey != "as_org_new" || creds.Pending != nil {
 		t.Errorf("stored creds = %+v", creds)
 	}
 }
@@ -1208,5 +1208,29 @@ func TestMCP_SendsUserAgent(t *testing.T) {
 	callTool(t, &MCPServer{}, 1, "airstrings_login", map[string]any{"base_url": srv.URL})
 	if !strings.HasPrefix(ua, "airstrings-mcp/") {
 		t.Errorf("User-Agent = %q", ua)
+	}
+}
+
+func TestMCP_LoginWithOrgRejectsApprovalForAnotherOrg(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	srv := mcpLoginServer(t, true)
+	server := &MCPServer{}
+	callTool(t, server, 1, "airstrings_login", map[string]any{"base_url": srv.URL, "org": "org_2"})
+	res := callTool(t, server, 2, "airstrings_login", map[string]any{"base_url": srv.URL, "org": "org_2"})
+	want := "Approved for Acme (org_1), but this setup is for org_2. Sign in to the dashboard of org_2's organization and approve again."
+	if !res.IsError || !strings.Contains(res.Content[0].Text, want) {
+		t.Fatalf("second call = %+v", res)
+	}
+}
+
+func TestMCP_InitWithOrgLogsInWhenOnlyAnotherOrgIsStored(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	srv := mcpLoginServer(t, false)
+	creds := &workspace.Creds{}
+	creds.SetOrgKey(workspace.OrgKey{BaseURL: srv.URL, OrgID: "org_a", APIKey: "as_org_a"})
+	workspace.SaveCreds(creds)
+	res := callTool(t, &MCPServer{}, 1, "airstrings_init", map[string]any{"base_url": srv.URL, "dir": t.TempDir(), "org": "org_b"})
+	if res.IsError || !strings.Contains(res.Content[0].Text, `"status":"pending"`) {
+		t.Fatalf("init = %+v", res)
 	}
 }

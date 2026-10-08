@@ -62,6 +62,7 @@ var toolDefs = []ToolDef{
 				"dir":      {Type: "string", Description: "Directory to initialize. Uses current working directory if omitted."},
 				"name":     {Type: "string", Description: "Name for a project created with an org key. Defaults to the folder or repository name."},
 				"project":  {Type: "string", Description: "Existing project ID or name to bind instead of creating one (org key)."},
+				"org":      {Type: "string", Description: "Organization ID to bind to. Uses the stored login for that org, or logs in. Optional."},
 			},
 		},
 	},
@@ -72,6 +73,7 @@ var toolDefs = []ToolDef{
 			Type: "object",
 			Properties: map[string]Property{
 				"base_url": {Type: "string", Description: "API base URL. Defaults to https://api.airstrings.com if omitted."},
+				"org":      {Type: "string", Description: "Organization ID the approval must be for. Optional."},
 			},
 		},
 	},
@@ -240,6 +242,7 @@ func handleToolInit(raw json.RawMessage) *CallToolResult {
 		Dir     string `json:"dir"`
 		Name    string `json:"name"`
 		Project string `json:"project"`
+		Org     string `json:"org"`
 	}
 	json.Unmarshal(raw, &args)
 
@@ -256,10 +259,10 @@ func handleToolInit(raw json.RawMessage) *CallToolResult {
 	if args.BaseURL == "" {
 		args.BaseURL = os.Getenv("AIRSTRINGS_BASE_URL")
 	}
-	opts := workspace.SetupOptions{APIKey: args.APIKey, BaseURL: args.BaseURL, Name: args.Name, Project: args.Project}
+	opts := workspace.SetupOptions{APIKey: args.APIKey, BaseURL: args.BaseURL, Name: args.Name, Project: args.Project, Org: args.Org}
 	res, err := workspace.Setup(dir, opts)
 	if errors.Is(err, workspace.ErrNoKey) {
-		if _, pending := login(args.BaseURL); pending != nil {
+		if _, pending := login(args.BaseURL, args.Org); pending != nil {
 			return pending
 		}
 		res, err = workspace.Setup(dir, opts)
@@ -290,12 +293,13 @@ func setupError(err error) *CallToolResult {
 func handleToolLogin(raw json.RawMessage) *CallToolResult {
 	var args struct {
 		BaseURL string `json:"base_url"`
+		Org     string `json:"org"`
 	}
 	json.Unmarshal(raw, &args)
 	if args.BaseURL == "" {
 		args.BaseURL = os.Getenv("AIRSTRINGS_BASE_URL")
 	}
-	k, pending := login(args.BaseURL)
+	k, pending := login(args.BaseURL, args.Org)
 	if pending != nil {
 		return pending
 	}
@@ -303,7 +307,7 @@ func handleToolLogin(raw json.RawMessage) *CallToolResult {
 	return textResult(string(out))
 }
 
-func login(baseURL string) (*workspace.OrgKey, *CallToolResult) {
+func login(baseURL, org string) (*workspace.OrgKey, *CallToolResult) {
 	if baseURL == "" {
 		baseURL = client.DefaultBaseURL
 	}
@@ -313,6 +317,9 @@ func login(baseURL string) (*workspace.OrgKey, *CallToolResult) {
 	}
 	if !fresh {
 		k, err := workspace.PollLogin(p, 0, nil)
+		if err == nil && org != "" && k.OrgID != org {
+			return nil, errorResult(workspace.WrongOrgMessage(k, org))
+		}
 		if err == nil {
 			return k, nil
 		}

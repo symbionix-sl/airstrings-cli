@@ -36,8 +36,12 @@ func (a Auth) FullPower() any {
 	if a.Type() != "org" {
 		return nil
 	}
-	if k := storedOrgKey(a.BaseURL); a.Source == "login" && k != nil {
-		return k.FullPower
+	if creds, err := LoadCreds(); err == nil && a.Source == "login" {
+		for _, k := range creds.OrgKeys {
+			if k.APIKey == a.Key {
+				return k.FullPower
+			}
+		}
 	}
 	return "unknown"
 }
@@ -59,16 +63,24 @@ func baseURLFor(cfg *WorkspaceConfig) string {
 	return client.DefaultBaseURL
 }
 
-func storedOrgKey(baseURL string) *OrgKey {
+func storedOrgKey(baseURL, orgID string) *OrgKey {
 	creds, err := LoadCreds()
 	if err != nil {
 		return nil
 	}
-	return creds.OrgKey(baseURL)
+	return creds.OrgKey(baseURL, orgID)
+}
+
+func orgOf(cfg *WorkspaceConfig) string {
+	if cfg == nil {
+		return ""
+	}
+	return cfg.OrgID
 }
 
 // ResolveAuth picks the key by precedence: AIRSTRINGS_ORG_API_KEY,
-// AIRSTRINGS_API_KEY, the workspace key, then the stored login key.
+// AIRSTRINGS_API_KEY, the workspace key, then the stored login key of the
+// workspace org (outside a workspace, the active org).
 func ResolveAuth(cfg *WorkspaceConfig) (Auth, bool) {
 	if env, ok := EnvAuthFromEnv(); ok {
 		return Auth{env.APIKey, env.BaseURL, env.Source}, true
@@ -79,7 +91,7 @@ func ResolveAuth(cfg *WorkspaceConfig) (Auth, bool) {
 		}
 	}
 	baseURL := baseURLFor(cfg)
-	if k := storedOrgKey(baseURL); k != nil && (cfg == nil || cfg.OrgID == "" || cfg.OrgID == k.OrgID) {
+	if k := storedOrgKey(baseURL, orgOf(cfg)); k != nil {
 		return Auth{k.APIKey, baseURL, "login"}, true
 	}
 	return Auth{}, false
@@ -91,7 +103,7 @@ func OrgAuth(cfg *WorkspaceConfig) (Auth, bool) {
 		return Auth{key, os.Getenv("AIRSTRINGS_BASE_URL"), "env:AIRSTRINGS_ORG_API_KEY"}, true
 	}
 	baseURL := baseURLFor(cfg)
-	if k := storedOrgKey(baseURL); k != nil {
+	if k := storedOrgKey(baseURL, orgOf(cfg)); k != nil {
 		return Auth{k.APIKey, baseURL, "login"}, true
 	}
 	return Auth{}, false

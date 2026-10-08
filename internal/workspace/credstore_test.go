@@ -70,23 +70,48 @@ func TestCredStore_OneKeyPerBaseURL(t *testing.T) {
 	if len(loaded.OrgKeys) != 2 {
 		t.Fatalf("got %d org keys, want 2", len(loaded.OrgKeys))
 	}
-	if k := loaded.OrgKey("https://api.example"); k == nil || k.APIKey != "as_org_prod2" {
+	if k := loaded.OrgKey("https://api.example", ""); k == nil || k.APIKey != "as_org_prod2" {
 		t.Errorf("prod key = %+v", k)
 	}
-	if k := loaded.OrgKey("https://api-staging.example"); k == nil || k.APIKey != "as_org_stg" {
+	if k := loaded.OrgKey("https://api-staging.example", ""); k == nil || k.APIKey != "as_org_stg" {
 		t.Errorf("staging key = %+v", k)
 	}
 }
 
 func TestCredStore_DeleteOrgKey(t *testing.T) {
 	creds := &Creds{}
-	creds.SetOrgKey(OrgKey{BaseURL: "https://a", APIKey: "as_org_a"})
-	creds.SetOrgKey(OrgKey{BaseURL: "https://b", APIKey: "as_org_b"})
-	if !creds.DeleteOrgKey("https://a") || creds.OrgKey("https://a") != nil || creds.OrgKey("https://b") == nil {
+	creds.SetOrgKey(OrgKey{BaseURL: "https://a", OrgID: "org_1", APIKey: "as_org_a1"})
+	creds.SetOrgKey(OrgKey{BaseURL: "https://a", OrgID: "org_2", APIKey: "as_org_a2"})
+	creds.SetOrgKey(OrgKey{BaseURL: "https://b", OrgID: "org_1", APIKey: "as_org_b"})
+	creds.UseOrg("https://a", "org_1")
+	if !creds.DeleteOrgKey("https://a", "org_1") || creds.OrgKey("https://a", "org_1") != nil || creds.OrgKey("https://a", "org_2") == nil || creds.OrgKey("https://b", "org_1") == nil {
 		t.Errorf("unexpected keys after delete: %+v", creds.OrgKeys)
 	}
-	if creds.DeleteOrgKey("https://a") {
+	if creds.Active["https://a"] != "" {
+		t.Errorf("active still points at the deleted org: %v", creds.Active)
+	}
+	if creds.DeleteOrgKey("https://a", "org_1") {
 		t.Error("second delete reported a key")
+	}
+}
+
+func TestCredStore_LoadsSingleKeyFileFromOlderCLI(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	os.MkdirAll(filepath.Dir(CredentialsPath()), 0700)
+	old := `{"org_keys":[{"base_url":"https://a","org_id":"org_a","org_name":"A","key_id":"ak_a","api_key":"as_org_a","full_power":false,"created_at":"2026-10-01T00:00:00Z"}]}`
+	os.WriteFile(CredentialsPath(), []byte(old), 0600)
+	creds, err := LoadCreds()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if k := creds.OrgKey("https://a", "org_a"); k == nil || k.APIKey != "as_org_a" {
+		t.Errorf("by org = %+v", k)
+	}
+	if k := creds.OrgKey("https://a", ""); k == nil || k.APIKey != "as_org_a" {
+		t.Errorf("without org = %+v", k)
+	}
+	if k := creds.OrgKey("https://a", "org_b"); k != nil {
+		t.Errorf("other org = %+v, want nil", k)
 	}
 }
 

@@ -13,13 +13,17 @@ import (
 	"github.com/symbionix-sl/airstrings-cli/internal/guide"
 )
 
-var ErrNoKey = errors.New("no API key: log in first")
+var (
+	ErrNoKey    = errors.New("no API key: log in first")
+	ErrWrongOrg = errors.New("key belongs to another organization")
+)
 
 type SetupOptions struct {
 	APIKey  string
 	BaseURL string
 	Name    string
 	Project string
+	Org     string
 }
 
 type SetupResult struct {
@@ -29,6 +33,7 @@ type SetupResult struct {
 	ActiveEnvName string
 	Environments  int
 	Sections      int
+	RelinkedFrom  string
 	SDK           *client.SDKConfig // nil for legacy environment keys
 }
 
@@ -58,7 +63,7 @@ func setupAuth(opts SetupOptions) (Auth, error) {
 	if baseURL == "" {
 		baseURL = client.DefaultBaseURL
 	}
-	if k := storedOrgKey(baseURL); k != nil {
+	if k := storedOrgKey(baseURL, opts.Org); k != nil {
 		return Auth{k.APIKey, opts.BaseURL, "login"}, nil
 	}
 	return Auth{}, ErrNoKey
@@ -141,8 +146,16 @@ func Setup(dir string, opts SetupOptions) (*SetupResult, error) {
 		}
 	}
 
+	if opts.Org != "" && cfg.OrgID != opts.Org {
+		return nil, fmt.Errorf("%w: the key is for %s, but this setup is for %s", ErrWrongOrg, cfg.OrgID, opts.Org)
+	}
 	if old, err := LoadConfig(filepath.Join(dir, DirName)); err == nil && old.ProjectID == cfg.ProjectID {
 		cfg.BundlesDir, cfg.Shared = old.BundlesDir, old.Shared
+	} else if err == nil && old.OrgID != "" && old.OrgID != cfg.OrgID {
+		if err := os.RemoveAll(filepath.Join(dir, DirName)); err != nil {
+			return nil, fmt.Errorf("remove workspace: %w", err)
+		}
+		res.RelinkedFrom = old.OrgID
 	}
 	if err := Init(dir, cfg); err != nil {
 		return nil, fmt.Errorf("init workspace: %w", err)

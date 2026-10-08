@@ -51,6 +51,17 @@ set, or if nobody approves in time, it **exits 9** and prints
 Give the URL to the user, then re-run the same command; each re-run reopens the
 approval page and waits up to 90 s. Don't pass `--no-browser` unless the machine has no browser.
 
+**Several organizations:** the setup prompt from the dashboard passes
+`--org <org_id>`. `airstrings init --org <id>` uses the stored login for that
+org, or logs in. If the approval comes from another org it exits 3 ("Approved
+for …, but this setup is for …"): approve from that org's dashboard. A folder
+linked to another org is re-linked: a new project is created in `<id>` and the
+local `.airstrings/` is replaced (the old org's project is not touched). One
+login is stored per org and API URL. A workspace uses its own org's login;
+outside a workspace the active org is used. `airstrings org` lists them,
+`airstrings org use <name|id>` switches the active one, and
+`airstrings logout --org <id>` forgets one.
+
 **Project key:** `airstrings init <as_proj_…>` binds the folder to the key's
 project (create one at `<webapp>/projects/{p}/api-keys`). One project key covers
 every environment of the project. In an existing workspace it switches keys in
@@ -69,7 +80,7 @@ AIRSTRINGS_NO_BROWSER   optional — print the login URL, don't open a browser
 ```
 
 Precedence: `AIRSTRINGS_ORG_API_KEY` > `AIRSTRINGS_API_KEY` > workspace key >
-stored login. An org key works on any project of the org: `--project <id|name>`
+stored login (the workspace's org, else the active org). An org key works on any project of the org: `--project <id|name>`
 picks one, `airstrings project ls` lists them. Legacy 64-hex environment keys
 keep working for their one environment.
 
@@ -177,7 +188,7 @@ airstrings publish en --json                               # ship it
 An MCP server (`airstrings-mcp`) exposes a subset of these as tools for clients
 without shell access (e.g. Claude Desktop): `airstrings mcp install`. It honors
 the same environment variables and stored login. `airstrings_login` and a
-keyless `airstrings_init` return `status: "pending"` with the approval URL; call
+keyless `airstrings_init` (both take an optional `org`) return `status: "pending"` with the approval URL; call
 again after the user approves. If you have
 a shell, prefer the CLI directly — it is more composable and supports paging,
 `--json`, and the exit codes above.

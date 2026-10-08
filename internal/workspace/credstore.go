@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -34,8 +35,9 @@ type PendingLogin struct {
 
 // Creds is the user-level credential store (org keys from `airstrings login`).
 type Creds struct {
-	OrgKeys []OrgKey      `json:"org_keys"`
-	Pending *PendingLogin `json:"pending,omitempty"`
+	OrgKeys []OrgKey          `json:"org_keys"`
+	Active  map[string]string `json:"active,omitempty"`
+	Pending *PendingLogin     `json:"pending,omitempty"`
 }
 
 func CredentialsPath() string {
@@ -77,31 +79,83 @@ func SaveCreds(creds *Creds) error {
 	return nil
 }
 
-func (c *Creds) OrgKey(baseURL string) *OrgKey {
-	for i := range c.OrgKeys {
-		if c.OrgKeys[i].BaseURL == baseURL {
-			return &c.OrgKeys[i]
+// OrgKey returns the key for orgID at baseURL, or with orgID "" the active
+// org's key, else the most recently created one.
+func (c *Creds) OrgKey(baseURL, orgID string) *OrgKey {
+	if orgID == "" && c.Active[baseURL] != "" {
+		if k := c.OrgKey(baseURL, c.Active[baseURL]); k != nil {
+			return k
 		}
 	}
-	return nil
+	var best *OrgKey
+	for i := range c.OrgKeys {
+		k := &c.OrgKeys[i]
+		if k.BaseURL == baseURL && (orgID == "" || k.OrgID == orgID) && (best == nil || k.CreatedAt.After(best.CreatedAt)) {
+			best = k
+		}
+	}
+	return best
 }
 
 func (c *Creds) SetOrgKey(k OrgKey) {
-	if old := c.OrgKey(k.BaseURL); old != nil {
+	if old := c.OrgKey(k.BaseURL, k.OrgID); old != nil && old.OrgID == k.OrgID {
 		*old = k
 		return
 	}
 	c.OrgKeys = append(c.OrgKeys, k)
 }
 
-func (c *Creds) DeleteOrgKey(baseURL string) bool {
+// UseOrg makes the stored org matching ref (ID or name) active for baseURL.
+func (c *Creds) UseOrg(baseURL, ref string) (*OrgKey, error) {
+	var known []string
 	for i := range c.OrgKeys {
-		if c.OrgKeys[i].BaseURL == baseURL {
+		k := &c.OrgKeys[i]
+		if k.BaseURL != baseURL {
+			continue
+		}
+		if k.OrgID == ref || strings.EqualFold(k.OrgName, ref) {
+			if c.Active == nil {
+				c.Active = map[string]string{}
+			}
+			c.Active[baseURL] = k.OrgID
+			return k, nil
+		}
+		known = append(known, fmt.Sprintf("%s (%s)", k.OrgName, k.OrgID))
+	}
+	next := "Run: airstrings login"
+	if len(known) > 0 {
+		next = "Use one of: " + strings.Join(known, ", ") + ", or run airstrings login"
+	}
+	return nil, &UsageError{fmt.Sprintf("no stored sign-in for org %q", ref), next}
+}
+
+func (c *Creds) DeleteOrgKey(baseURL, orgID string) bool {
+	for i := range c.OrgKeys {
+		if c.OrgKeys[i].BaseURL == baseURL && c.OrgKeys[i].OrgID == orgID {
 			c.OrgKeys = append(c.OrgKeys[:i], c.OrgKeys[i+1:]...)
+			if c.Active[baseURL] == orgID {
+				delete(c.Active, baseURL)
+			}
 			return true
 		}
 	}
 	return false
+}
+
+// OrgName returns the stored name of orgID, or orgID when none is stored.
+func OrgName(orgID string) string {
+	if creds, err := LoadCreds(); err == nil {
+		for _, k := range creds.OrgKeys {
+			if k.OrgID == orgID && k.OrgName != "" {
+				return k.OrgName
+			}
+		}
+	}
+	return orgID
+}
+
+func WrongOrgMessage(k *OrgKey, org string) string {
+	return fmt.Sprintf("Approved for %s (%s), but this setup is for %s. Sign in to the dashboard of %s's organization and approve again.", k.OrgName, k.OrgID, org, org)
 }
 
 // PendingFor returns the unexpired pending login for baseURL, or nil.

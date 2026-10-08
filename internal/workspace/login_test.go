@@ -147,7 +147,7 @@ func TestLoginSavesKeyBeforeSetup(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	creds, _ := LoadCreds()
-	k := creds.OrgKey(srv.URL)
+	k := creds.OrgKey(srv.URL, "")
 	if k == nil || k.APIKey != "as_org_new" || k.KeyID != "ak_new" || k.OrgID != "org_1" || !k.FullPower || creds.Pending != nil {
 		t.Errorf("stored creds = %+v", creds)
 	}
@@ -166,7 +166,7 @@ func TestReloginRevokesPreviousStoredKey(t *testing.T) {
 	}))
 	defer srv.Close()
 	creds := &Creds{}
-	creds.SetOrgKey(OrgKey{BaseURL: srv.URL, KeyID: "ak_old", APIKey: "as_org_old"})
+	creds.SetOrgKey(OrgKey{BaseURL: srv.URL, OrgID: "org_1", KeyID: "ak_old", APIKey: "as_org_old"})
 	SaveCreds(creds)
 
 	if _, err := PollOnce(pendingFor(srv.URL)); err != nil {
@@ -174,6 +174,38 @@ func TestReloginRevokesPreviousStoredKey(t *testing.T) {
 	}
 	if revoked != "/v1/org/api-keys/ak_old" || revokedWith != "as_org_old" {
 		t.Errorf("revoked %q with %q", revoked, revokedWith)
+	}
+}
+
+func TestLoginOtherOrgKeepsBothKeysAndRevokesNothing(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	srv, _ := tokenServer(t, approvedReply)
+	revoked := false
+	srv.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "DELETE" {
+			revoked = true
+		}
+		w.Write([]byte(approvedReply))
+	})
+	creds := &Creds{}
+	creds.SetOrgKey(OrgKey{BaseURL: srv.URL, OrgID: "org_a", KeyID: "ak_a", APIKey: "as_org_a", CreatedAt: time.Now().Add(-time.Hour)})
+	SaveCreds(creds)
+
+	if _, err := PollOnce(pendingFor(srv.URL)); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if revoked {
+		t.Error("logging in to another org revoked the stored key")
+	}
+	loaded, _ := LoadCreds()
+	if a, b := loaded.OrgKey(srv.URL, "org_a"), loaded.OrgKey(srv.URL, "org_1"); a == nil || a.APIKey != "as_org_a" || b == nil || b.APIKey != "as_org_new" {
+		t.Errorf("keys = %+v", loaded.OrgKeys)
+	}
+	if k := loaded.OrgKey(srv.URL, ""); k == nil || k.OrgID != "org_1" {
+		t.Errorf("no-org lookup = %+v, want the most recent (org_1)", k)
+	}
+	if loaded.Active[srv.URL] != "org_1" {
+		t.Errorf("active = %v, want the newly approved org", loaded.Active)
 	}
 }
 

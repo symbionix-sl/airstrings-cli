@@ -51,7 +51,8 @@ func StartLogin(baseURL, clientName string) (p *PendingLogin, fresh bool, err er
 }
 
 // PollOnce redeems the device code once. On approval the org key is stored,
-// the pending login cleared and the previously stored key revoked (best effort).
+// made active, the pending login cleared and the previously stored key of the
+// same org revoked (best effort).
 func PollOnce(p *PendingLogin) (*OrgKey, error) {
 	tok, err := client.New("", p.BaseURL, "", "").PollCLIAuth(p.DeviceCode)
 	if err != nil {
@@ -67,11 +68,12 @@ func PollOnce(p *PendingLogin) (*OrgKey, error) {
 	if err != nil {
 		return nil, err
 	}
-	if old := creds.OrgKey(p.BaseURL); old != nil && old.KeyID != tok.KeyID {
+	if old := creds.OrgKey(p.BaseURL, tok.OrgID); old != nil && old.KeyID != tok.KeyID {
 		client.New(old.APIKey, p.BaseURL, "", "").RevokeOrgKey(old.KeyID)
 	}
 	key := OrgKey{BaseURL: p.BaseURL, OrgID: tok.OrgID, OrgName: tok.OrgName, KeyID: tok.KeyID, APIKey: tok.APIKey, FullPower: tok.FullPower, CreatedAt: time.Now().UTC()}
 	creds.SetOrgKey(key)
+	creds.UseOrg(p.BaseURL, key.OrgID)
 	creds.Pending = nil
 	return &key, SaveCreds(creds)
 }

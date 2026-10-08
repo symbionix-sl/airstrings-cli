@@ -81,7 +81,7 @@ func TestCLISubprocess(t *testing.T) {
 		{"apikey help", []string{"apikey", "--help"}, 0, "Usage: airstrings apikey <ls|rotate>", ""},
 		{"status help", []string{"status", "--help"}, 0, "Usage: airstrings status", ""},
 		{"strings help", []string{"strings", "--help"}, 0, "Usage: airstrings strings <ls|get|set|rm>", ""},
-		{"init help", []string{"init", "--help"}, 0, "Usage: airstrings init [<api-key>] [--name <name>]", ""},
+		{"init help", []string{"init", "--help"}, 0, "Usage: airstrings init [<api-key>] [--org <org-id>] [--name <name>]", ""},
 		{"env help", []string{"env", "--help"}, 0, "Usage: airstrings env [use|add|rm|create]", ""},
 		{"push short help", []string{"push", "-h"}, 0, "Usage: airstrings push [--section <name>]", ""},
 		{"status unknown flag", []string{"status", "--totallyfake"}, 2, "", "unknown flag: --totallyfake"},
