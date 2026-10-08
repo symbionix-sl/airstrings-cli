@@ -50,6 +50,10 @@ set, or if nobody approves in time, it **exits 9** and prints
 `{status:"pending", verification_uri_complete, user_code, expires_in, next_step}`.
 Give the URL to the user, then re-run the same command; each re-run reopens the
 approval page and waits up to 90 s. Don't pass `--no-browser` unless the machine has no browser.
+When the browser opens locally (not over SSH), the approval comes back to the CLI on
+`127.0.0.1` (no code to check) and a re-run listens on the same port. If an approval
+doesn't reach the CLI, it prints "Approval didn't reach this terminal. Approve again
+in the browser." and starts a new login (exit 9 if the 90 s are used up).
 
 **Several organizations:** the setup prompt from the dashboard passes
 `--org <org_id>`. `airstrings init --org <id>` uses the stored login for that

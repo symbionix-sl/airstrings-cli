@@ -301,8 +301,9 @@ Log in through the browser. An owner of the organization approves the request,
 then an org key is stored in ~/.config/airstrings/credentials.json (0600), one
 per organization, and that org becomes active. Logging in again to the same org
 revokes its previous key. With --org, an approval from another org exits 3.
-Without a terminal it waits up to 90 s; with --no-browser or CI, or on timeout,
-it exits 9 with the URL.
+When the browser opens locally (not over SSH), the approval returns to the CLI
+on 127.0.0.1, with no code to check. Without a terminal it waits up to 90 s;
+with --no-browser or CI, or on timeout, it exits 9 with the URL.
 `,
 	"logout": `Usage: airstrings logout [--org <org-id>] [--url <base-url>]
 
