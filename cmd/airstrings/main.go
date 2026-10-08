@@ -3194,7 +3194,7 @@ func handleInit(args []string) {
 	}
 
 	if res.RelinkedFrom != "" {
-		fmt.Printf("This folder was linked to %s; re-linked to %s.\n", client.StripControl(workspace.OrgName(res.RelinkedFrom)), client.StripControl(workspace.OrgName(org)))
+		fmt.Printf("This folder was linked to %s; re-linked to %s. Previous local files moved to %s.%s\n", client.StripControl(workspace.OrgName(res.RelinkedFrom)), client.StripControl(workspace.OrgName(org)), workspace.DirName, client.StripControl(res.RelinkedFrom))
 	}
 	verb := "Workspace initialized for"
 	if res.Created {

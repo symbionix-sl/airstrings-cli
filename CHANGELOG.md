@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `init --org <org_id>` binds the folder to that organization: it uses the stored login for that org, or logs in. An approval from another org exits 3 ("Approved for <name> (<id>), but this setup is for <org>…"). A folder linked to another org gets a new project in `<org_id>` and prints "This folder was linked to <old>; re-linked to <new>."; the old org's project is not touched.
+- `init --org <org_id>` binds the folder to that organization: it uses the stored login for that org, or logs in. An approval from another org exits 3 ("Approved for <name> (<id>), but this setup is for <org>…"). A folder linked to another org gets a new project in `<org_id>` and prints "This folder was linked to <old>; re-linked to <new>. Previous local files moved to .airstrings.<old_org_id>"; the old org's project is not touched.
 - `login --org <org_id>` rejects an approval from another org (exit 3).
 - `org` lists the stored logins for the API URL (✓ = active); `org use <name|id>` sets the active org.
 - `logout --org <org_id>` revokes and forgets one org's login.

@@ -152,8 +152,8 @@ func Setup(dir string, opts SetupOptions) (*SetupResult, error) {
 	if old, err := LoadConfig(filepath.Join(dir, DirName)); err == nil && old.ProjectID == cfg.ProjectID {
 		cfg.BundlesDir, cfg.Shared = old.BundlesDir, old.Shared
 	} else if err == nil && old.OrgID != "" && old.OrgID != cfg.OrgID {
-		if err := os.RemoveAll(filepath.Join(dir, DirName)); err != nil {
-			return nil, fmt.Errorf("remove workspace: %w", err)
+		if err := os.Rename(filepath.Join(dir, DirName), filepath.Join(dir, DirName+"."+old.OrgID)); err != nil {
+			return nil, fmt.Errorf("move old workspace: %w", err)
 		}
 		res.RelinkedFrom = old.OrgID
 	}

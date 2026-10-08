@@ -56,7 +56,8 @@ approval page and waits up to 90 s. Don't pass `--no-browser` unless the machine
 org, or logs in. If the approval comes from another org it exits 3 ("Approved
 for …, but this setup is for …"): approve from that org's dashboard. A folder
 linked to another org is re-linked: a new project is created in `<id>` and the
-local `.airstrings/` is replaced (the old org's project is not touched). One
+old local `.airstrings/` is moved to `.airstrings.<old_org_id>/` (the old
+org's project is not touched). One
 login is stored per org and API URL. A workspace uses its own org's login;
 outside a workspace the active org is used. `airstrings org` lists them,
 `airstrings org use <name|id>` switches the active one, and

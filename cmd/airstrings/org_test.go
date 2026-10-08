@@ -109,13 +109,19 @@ func TestInitOrgRelinksWorkspaceFromAnotherOrg(t *testing.T) {
 	if code, stdout, _ := runSharedInDir(t, dir, env, "init", "--org", "org_a", "--url", srv.URL); code != 0 || !strings.Contains(stdout, "already initialized") {
 		t.Fatalf("same-org rerun exit = %d\nstdout: %s", code, stdout)
 	}
+	if err := os.WriteFile(filepath.Join(dir, ".airstrings", "strings.csv"), []byte("key,locale,value,format\nk,en,unpushed,text\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
 	before := len(seen())
 	code, stdout, stderr := runSharedInDir(t, dir, env, "init", "--org", "org_b", "--url", srv.URL)
-	if code != 0 || !strings.Contains(stdout, "This folder was linked to A; re-linked to B.") {
+	if code != 0 || !strings.Contains(stdout, "This folder was linked to A; re-linked to B. Previous local files moved to .airstrings.org_a") {
 		t.Fatalf("exit = %d\nstdout: %s\nstderr: %s", code, stdout, stderr)
 	}
 	if cfg := readSharedConfig(t, dir); cfg.ProjectID != "proj_org_b" {
 		t.Errorf("workspace = %+v", cfg)
+	}
+	if data, err := os.ReadFile(filepath.Join(dir, ".airstrings.org_a", "strings.csv")); err != nil || !strings.Contains(string(data), "unpushed") {
+		t.Errorf("old strings not kept: %v %q", err, data)
 	}
 	for _, s := range seen()[before:] {
 		if strings.HasSuffix(s, "as_org_a") {
