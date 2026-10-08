@@ -29,6 +29,13 @@ func orgAPI(t *testing.T, tokenReply *string) (*httptest.Server, func() []string
 				w.WriteHeader(400)
 			}
 			w.Write([]byte(*tokenReply))
+		case r.URL.Path == "/v1/org":
+			if org == "org_old" {
+				w.WriteHeader(403)
+				w.Write([]byte(`{"error":{"code":"forbidden","message":"forbidden"}}`))
+				return
+			}
+			w.Write([]byte(`{"id":"` + org + `","name":"` + strings.ToUpper(strings.TrimPrefix(org, "org_")) + `"}`))
 		case r.Method == "DELETE":
 			w.WriteHeader(http.StatusNoContent)
 		case r.Method == "POST" && r.URL.Path == "/v1/projects":
@@ -225,5 +232,40 @@ func TestStatusShowsWorkspaceOrgName(t *testing.T) {
 	}
 	if code, stdout, _ := runSharedInDir(t, dir, env, "status"); code != 0 || !strings.Contains(stdout, "Org:      A (org_a)") {
 		t.Errorf("status exit = %d\nstdout: %s", code, stdout)
+	}
+}
+
+func TestInitOrgWithEnvOrgKeyOfAnotherOrgExits3BeforeWrites(t *testing.T) {
+	reply := ""
+	srv, seen := orgAPI(t, &reply)
+	dir := appDir(t)
+	env := []string{"XDG_CONFIG_HOME=" + t.TempDir(), "AIRSTRINGS_ORG_API_KEY=as_org_a"}
+	code, stdout, stderr := runSharedInDir(t, dir, env, "init", "--org", "org_b", "--url", srv.URL)
+	want := "This org key belongs to A (org_a), but this setup is for org_b. Unset AIRSTRINGS_ORG_API_KEY or use a key for org_b."
+	if code != 3 || !strings.Contains(stderr, want) || strings.Contains(stderr, "another organization:") {
+		t.Fatalf("exit = %d\nstdout: %s\nstderr: %s", code, stdout, stderr)
+	}
+	for _, s := range seen() {
+		if !strings.HasPrefix(s, "GET ") {
+			t.Errorf("write before the org check: %s", s)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".airstrings")); err == nil {
+		t.Error("workspace written for the wrong org")
+	}
+}
+
+func TestInitOrgWithEnvOrgKeyChecksOrg(t *testing.T) {
+	for _, tc := range []struct{ key, org string }{{"as_org_b", "org_b"}, {"as_org_old", "org_old"}} {
+		reply := ""
+		srv, seen := orgAPI(t, &reply)
+		dir := appDir(t)
+		env := []string{"XDG_CONFIG_HOME=" + t.TempDir(), "AIRSTRINGS_ORG_API_KEY=" + tc.key}
+		if code, _, stderr := runSharedInDir(t, dir, env, "init", "--org", tc.org, "--url", srv.URL); code != 0 || readSharedConfig(t, dir).ProjectID != "proj_"+tc.org {
+			t.Fatalf("%s: exit = %d\nstderr: %s", tc.key, code, stderr)
+		}
+		if got := seen(); len(got) == 0 || !strings.HasPrefix(got[0], "GET /v1/org ") {
+			t.Errorf("%s: org not checked first: %v", tc.key, got)
+		}
 	}
 }

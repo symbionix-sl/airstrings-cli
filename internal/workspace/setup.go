@@ -69,6 +69,11 @@ func setupAuth(opts SetupOptions) (Auth, error) {
 	return Auth{}, ErrNoKey
 }
 
+type WrongOrgError struct{ Msg string }
+
+func (e *WrongOrgError) Error() string        { return e.Msg }
+func (e *WrongOrgError) Is(target error) bool { return target == ErrWrongOrg }
+
 // Setup binds dir to a project: an org key selects (--project) or creates one
 // named after the folder; a project or legacy key uses its own project.
 func Setup(dir string, opts SetupOptions) (*SetupResult, error) {
@@ -77,6 +82,11 @@ func Setup(dir string, opts SetupOptions) (*SetupResult, error) {
 		return nil, err
 	}
 	keyType := client.KeyType(auth.Key)
+	if opts.Org != "" && keyType == "org" && auth.Source != "login" {
+		if org, err := client.New(auth.Key, auth.BaseURL, "", "").GetOrg(); err == nil && org.ID != opts.Org {
+			return nil, &WrongOrgError{fmt.Sprintf("This org key belongs to %s (%s), but this setup is for %s. Unset AIRSTRINGS_ORG_API_KEY or use a key for %s.", client.StripControl(org.Name), client.StripControl(org.ID), opts.Org, opts.Org)}
+		}
+	}
 	res := &SetupResult{}
 	switch {
 	case keyType == "org" && opts.Project == "":

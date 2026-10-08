@@ -45,3 +45,13 @@ func (c *Client) PollCLIAuth(deviceCode string) (*CLIAuthToken, error) {
 func (c *Client) RevokeOrgKey(keyID string) error {
 	return c.do("DELETE", "/v1/org/api-keys/"+keyID, nil, nil, nil)
 }
+
+type Org struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+func (c *Client) GetOrg() (*Org, error) {
+	var o Org
+	return &o, c.do("GET", "/v1/org", nil, nil, &o)
+}
