@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.19.0] - 2026-10-08
+
+### Added
+
+- `init --org <org_id>` binds the folder to that organization: it uses the stored login for that org, or logs in. An approval from another org exits 3 ("Approved for <name> (<id>), but this setup is for <org>…"). A folder linked to another org gets a new project in `<org_id>` and prints "This folder was linked to <old>; re-linked to <new>."; the old org's project is not touched.
+- `login --org <org_id>` rejects an approval from another org (exit 3).
+- `org` lists the stored logins for the API URL (✓ = active); `org use <name|id>` sets the active org.
+- `logout --org <org_id>` revokes and forgets one org's login.
+- `status` shows the workspace's organization.
+- MCP `airstrings_init` and `airstrings_login` take an optional `org`.
+
+### Changed
+
+- One org key is stored per organization and API URL. Logging in to another org keeps the existing logins; logging in again to the same org still replaces and revokes its old key. The newly approved org becomes active.
+- A workspace always uses its own org's login; outside a workspace the active org is used (else the most recent login).
+- `logout` revokes the active org's login only.
+
 ## [0.18.4] - 2026-10-06
 
 ### Fixed
