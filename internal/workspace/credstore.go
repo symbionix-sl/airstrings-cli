@@ -31,6 +31,7 @@ type PendingLogin struct {
 	VerificationURIComplete string    `json:"verification_uri_complete"`
 	Interval                int       `json:"interval"`
 	ExpiresAt               time.Time `json:"expires_at"`
+	Org                     string    `json:"-"`
 }
 
 // Creds is the user-level credential store (org keys from `airstrings login`).

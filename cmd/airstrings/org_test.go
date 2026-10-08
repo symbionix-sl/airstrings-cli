@@ -94,6 +94,9 @@ func TestInitOrgApprovedForAnotherOrgExits3(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(dir, ".airstrings")); err == nil {
 		t.Error("workspace written for the wrong org")
 	}
+	if active, _ := readCreds(t, xdg)["active"].(map[string]any); active[srv.URL] == "org_a" {
+		t.Errorf("wrong-org approval became active: %v", active)
+	}
 }
 
 func TestInitOrgRelinksWorkspaceFromAnotherOrg(t *testing.T) {
@@ -161,8 +164,8 @@ func TestLogoutOrgRevokesOnlyThatOrg(t *testing.T) {
 	srv, seen := orgAPI(t, &reply)
 	xdg := t.TempDir()
 	storeOrgKeys(t, xdg, srv.URL, "a", "b")
-	if code, _, stderr := runSharedInDir(t, t.TempDir(), []string{"XDG_CONFIG_HOME=" + xdg}, "logout", "--org", "org_a", "--url", srv.URL); code != 0 {
-		t.Fatalf("exit = %d\nstderr: %s", code, stderr)
+	if code, stdout, stderr := runSharedInDir(t, t.TempDir(), []string{"XDG_CONFIG_HOME=" + xdg}, "logout", "--org", "org_a", "--url", srv.URL); code != 0 || !strings.Contains(stdout, "Logged out of A") {
+		t.Fatalf("exit = %d\nstdout: %s\nstderr: %s", code, stdout, stderr)
 	}
 	if got := revokedKeys(seen()); got != "ak_a as_org_a" {
 		t.Errorf("revoked %q, want only org a", got)

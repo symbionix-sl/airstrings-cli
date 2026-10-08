@@ -835,7 +835,7 @@ func handleProjectLs() {
 
 func handleLogin(args []string) {
 	baseURL, noBrowser, org := parseLoginFlags(args)
-	key := login(baseURL, noBrowser)
+	key := login(baseURL, org, noBrowser)
 	if org != "" && key.OrgID != org {
 		output.Fail(output.ExitAuth, "%s", workspace.WrongOrgMessage(key, org))
 	}
@@ -880,7 +880,7 @@ func parseLoginFlags(args []string) (baseURL string, noBrowser bool, org string)
 // until approval. Otherwise it polls for up to 90 s, except a first run
 // without an opened browser (or in CI), which exits 9 with the approval URL.
 // An expired code is replaced with a fresh one within the same run.
-func login(baseURL string, noBrowser bool) *workspace.OrgKey {
+func login(baseURL, org string, noBrowser bool) *workspace.OrgKey {
 	interactive := isInteractive()
 	deadline := time.Now().Add(workspace.PollBudget)
 	for {
@@ -895,6 +895,7 @@ func login(baseURL string, noBrowser bool) *workspace.OrgKey {
 			}
 			failAPI("start login", err)
 		}
+		p.Org = org
 		if fresh {
 			fmt.Fprintf(os.Stderr, "To log in, open:\n  %s\nand check the code %s. An owner of your AirStrings organization must approve.\n", p.VerificationURIComplete, p.UserCode)
 		}
@@ -1008,8 +1009,10 @@ func handleLogout(args []string) {
 		output.Errorf("%s", err)
 	}
 	creds.Pending = nil
-	k := creds.OrgKey(baseURL, org)
-	if k != nil {
+	var k *workspace.OrgKey
+	if found := creds.OrgKey(baseURL, org); found != nil {
+		copied := *found
+		k = &copied
 		if err := client.New(k.APIKey, baseURL, "", "").RevokeOrgKey(k.KeyID); err != nil {
 			output.Warnf("could not revoke the key on the server (%s); an owner can delete it in the dashboard", err)
 		}
@@ -3151,7 +3154,7 @@ func handleInit(args []string) {
 		if loginURL == "" {
 			loginURL = client.DefaultBaseURL
 		}
-		if k := login(loginURL, noBrowser); org != "" && k.OrgID != org {
+		if k := login(loginURL, org, noBrowser); org != "" && k.OrgID != org {
 			output.Fail(output.ExitAuth, "%s", workspace.WrongOrgMessage(k, org))
 		}
 		res, err = workspace.Setup(cwd, opts)

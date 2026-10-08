@@ -315,6 +315,7 @@ func login(baseURL, org string) (*workspace.OrgKey, *CallToolResult) {
 	if err != nil {
 		return nil, errorResult(fmt.Sprintf("start login: %s", err))
 	}
+	p.Org = org
 	if !fresh {
 		k, err := workspace.PollLogin(p, 0, nil)
 		if err == nil && org != "" && k.OrgID != org {

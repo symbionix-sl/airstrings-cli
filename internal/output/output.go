@@ -65,7 +65,11 @@ func JSON(v any) {
 func Table(headers []string, rows [][]string) {
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(w, strings.Join(headers, "\t"))
-	fmt.Fprintln(w, strings.Repeat("─", len(strings.Join(headers, "  "))))
+	rule := make([]string, len(headers))
+	for i, h := range headers {
+		rule[i] = strings.Repeat("─", len(h))
+	}
+	fmt.Fprintln(w, strings.Join(rule, "\t"))
 	for _, row := range rows {
 		fmt.Fprintln(w, strings.Join(row, "\t"))
 	}

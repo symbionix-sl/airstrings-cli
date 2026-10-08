@@ -18,9 +18,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- One org key is stored per organization and API URL. Logging in to another org keeps the existing logins; logging in again to the same org still replaces and revokes its old key. The newly approved org becomes active.
+- One org key is stored per organization and API URL. Logging in to another org keeps the existing logins; logging in again to the same org still replaces and revokes its old key. The newly approved org becomes active, unless `--org` asked for another org.
 - A workspace always uses its own org's login; outside a workspace the active org is used (else the most recent login).
 - `logout` revokes the active org's login only.
+
+### Fixed
+
+- Table headers and their rule line now align with the rows (`project ls`, `env ls`, `org`, …).
 
 ## [0.18.4] - 2026-10-06
 
