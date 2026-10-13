@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -352,7 +353,8 @@ Flags:
 `,
 	"apikey": `Usage: airstrings apikey <ls|rotate|revoke> [--env <name>]
 
-  apikey ls       List the project's keys (scope, permission, prefix)
+  apikey ls       List the project's keys (scope, permission, prefix); ✓ marks
+                  the keys stored in this workspace (what revoke removes)
   apikey rotate   Rotate the workspace key. A project key is revoked and
                   replaced in one call
   apikey revoke   Revoke every key stored in this workspace and remove them
@@ -754,6 +756,7 @@ func printStatus(wsDir string, wsCfg *workspace.WorkspaceConfig) {
 			"key_source":        auth.Source,
 			"full_power":        auth.FullPower(),
 			"hint":              info.Hint,
+			"stored_keys":       wsCfg.MaskedStoredKeys(),
 			"environments":      envs,
 		})
 		return
@@ -765,7 +768,10 @@ func printStatus(wsDir string, wsCfg *workspace.WorkspaceConfig) {
 	fmt.Printf("Project:  %s (%s)\n", wsCfg.ProjectName, wsCfg.ProjectID)
 	fmt.Printf("Env:      %s (%s)\n", cred.EnvName, cred.EnvID)
 	fmt.Printf("API URL:  %s\n", url)
-	fmt.Printf("Key:      %s (%s, %s, %s)\n", maskKey(auth.Key), auth.Type(), info.KeyScope, auth.Source)
+	fmt.Printf("Key:      %s (%s, %s, %s)\n", client.MaskKey(auth.Key), auth.Type(), info.KeyScope, auth.Source)
+	if stored := wsCfg.MaskedStoredKeys(); len(stored) > 0 {
+		fmt.Printf("Stored:   %s (apikey revoke removes them)\n", strings.Join(stored, ", "))
+	}
 	fmt.Printf("Protection: %s\n", protectionLine(info))
 	printHint(info.Hint)
 }
@@ -811,7 +817,7 @@ func printEnvStatus(env workspace.EnvAuth) {
 	fmt.Printf("Project:  %s\n", projectID)
 	fmt.Printf("Env:      %s\n", envID)
 	fmt.Printf("API URL:  %s\n", base)
-	fmt.Printf("Key:      %s (%s, %s)\n", maskKey(auth.Key), auth.Type(), info.KeyScope)
+	fmt.Printf("Key:      %s (%s, %s)\n", client.MaskKey(auth.Key), auth.Type(), info.KeyScope)
 	fmt.Printf("Protection: %s\n", protectionLine(info))
 	printHint(info.Hint)
 }
@@ -1391,22 +1397,27 @@ func handleAPIKeyLs(args []string) {
 			names[e.ID] = client.StripControl(e.Name)
 		}
 	}
+	var stored []string
+	if wsDir, err := workspace.Find(); err == nil {
+		if wsCfg, err := workspace.LoadConfig(wsDir); err == nil {
+			stored = wsCfg.StoredKeys()
+		}
+	}
 	rows := make([][]string, len(list.Data))
-	for i, k := range list.Data {
+	for i := range list.Data {
+		k := &list.Data[i]
+		k.InWorkspace = k.Prefix != "" && slices.ContainsFunc(stored, func(s string) bool { return strings.HasPrefix(s, k.Prefix) })
 		scope := k.Scope
 		if k.EnvID != nil {
 			scope += " (" + names[*k.EnvID] + ")"
 		}
-		rows[i] = []string{k.ID, client.StripControl(k.Name), scope, k.Permission, k.Prefix}
+		mark := ""
+		if k.InWorkspace {
+			mark = "✓"
+		}
+		rows[i] = []string{k.ID, client.StripControl(k.Name), scope, k.Permission, k.Prefix, mark}
 	}
-	output.Auto(list, []string{"ID", "NAME", "SCOPE", "PERMISSION", "PREFIX"}, rows)
-}
-
-func maskKey(key string) string {
-	if len(key) < 20 {
-		return "****"
-	}
-	return key[:12] + "..." + key[len(key)-4:]
+	output.Auto(list, []string{"ID", "NAME", "SCOPE", "PERMISSION", "PREFIX", "IN WORKSPACE"}, rows)
 }
 
 func apiKeyCredential(args []string) (string, *workspace.WorkspaceConfig, *workspace.Credential) {
@@ -1471,7 +1482,7 @@ func handleAPIKeyRotate(args []string) {
 		return
 	}
 
-	masked := maskKey(cred.APIKey)
+	masked := client.MaskKey(cred.APIKey)
 	if result.OldKeyID == "" {
 		output.Success(fmt.Sprintf("Rotated project key — new key %s (old key revoked)", masked))
 	} else if result.Revoked {
@@ -1486,29 +1497,19 @@ func handleAPIKeyRevoke(args []string) {
 		output.Fail(output.ExitUsage, "usage: airstrings apikey revoke")
 	}
 	wsDir, wsCfg := mustWorkspace()
-	var revoked []string
-	for i := range wsCfg.Credentials {
-		cred := &wsCfg.Credentials[i]
-		if cred.APIKey == "" {
-			continue
-		}
-		masked := maskKey(cred.APIKey)
-		id, err := workspace.RevokeKey(wsDir, wsCfg, cred)
-		if err != nil {
-			failAPI("revoke key", err)
-		}
-		revoked = append(revoked, id)
-		if !output.JSONMode {
-			output.Success(fmt.Sprintf("Revoked key %s (%s) and removed it from this workspace", masked, id))
-		}
-	}
-	if len(revoked) == 0 {
+	if len(wsCfg.StoredKeys()) == 0 {
 		output.FailNext(output.ExitUsage, "nothing to revoke: this workspace uses your login key, not a stored key",
 			"To revoke your login key run: airstrings logout")
 	}
+	revoked, err := workspace.RevokeStoredKeys(wsDir, wsCfg)
+	if err != nil {
+		failAPI("revoke key", err)
+	}
 	if output.JSONMode {
 		output.JSON(map[string][]string{"revoked_key_ids": revoked})
+		return
 	}
+	output.Success(fmt.Sprintf("Revoked %s; removed from this workspace", strings.Join(revoked, ", ")))
 }
 
 // --- String commands ---

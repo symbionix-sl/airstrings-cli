@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.22.0] - 2026-10-13
+
+### Added
+
+- `apikey ls` marks the keys stored in this workspace (`IN WORKSPACE` column; `in_workspace` in `--json`), so you can see what `apikey revoke` removes.
+- `status` shows the keys stored in the workspace (`Stored:` line; `stored_keys` in `--json`, `[]` when the workspace uses the login). MCP `airstrings_status` returns the same `stored_keys`.
+
+### Fixed
+
+- `apikey revoke` also revokes the shared-bucket key (`shared.api_key` from `shared init`) and removes it from `config.json`.
+
 ## [0.21.0] - 2026-10-13
 
 ### Added

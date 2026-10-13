@@ -106,25 +106,46 @@ func findOwnKey(c *client.Client, apiKey string) (*client.APIKey, error) {
 	return nil, fmt.Errorf("could not identify the workspace API key among the project's keys — revoke it via the dashboard instead")
 }
 
-// RevokeKey revokes the credential's key on the server and clears it from every
-// credential holding it, so the workspace falls back to the login key.
-func RevokeKey(wsDir string, wsCfg *WorkspaceConfig, cred *Credential) (string, error) {
-	key := cred.APIKey
-	c := client.New(key, cred.BaseURL, wsCfg.ProjectID, cred.EnvID)
-	own, err := findOwnKey(c, key)
-	if err != nil {
-		return "", err
-	}
-	if err := c.RevokeAPIKey(own.ID); err != nil {
-		return "", fmt.Errorf("revoke key: %w", err)
+// RevokeStoredKeys revokes every key stored in config.json (environment
+// credentials and the shared-bucket key), clearing each one as it goes so the
+// workspace falls back to the login key. It returns the revoked key IDs.
+func RevokeStoredKeys(wsDir string, wsCfg *WorkspaceConfig) ([]string, error) {
+	var revoked []string
+	revoke := func(c *client.Client, key string, clear func()) error {
+		own, err := findOwnKey(c, key)
+		if err != nil {
+			return err
+		}
+		if err := c.RevokeAPIKey(own.ID); err != nil {
+			return err
+		}
+		revoked = append(revoked, own.ID)
+		clear()
+		if err := SaveConfig(wsDir, wsCfg); err != nil {
+			return fmt.Errorf("save config: %w — key %s is already revoked; remove it from config.json by hand", err, own.ID)
+		}
+		return nil
 	}
 	for i := range wsCfg.Credentials {
-		if wsCfg.Credentials[i].APIKey == key {
-			wsCfg.Credentials[i].APIKey = ""
+		cred := wsCfg.Credentials[i]
+		if cred.APIKey == "" {
+			continue
+		}
+		err := revoke(client.New(cred.APIKey, cred.BaseURL, wsCfg.ProjectID, cred.EnvID), cred.APIKey, func() {
+			for j := range wsCfg.Credentials {
+				if wsCfg.Credentials[j].APIKey == cred.APIKey {
+					wsCfg.Credentials[j].APIKey = ""
+				}
+			}
+		})
+		if err != nil {
+			return revoked, err
 		}
 	}
-	if err := SaveConfig(wsDir, wsCfg); err != nil {
-		return own.ID, fmt.Errorf("save config: %w — key %s is already revoked; remove it from config.json by hand", err, own.ID)
+	if s := wsCfg.Shared; s != nil && s.APIKey != "" {
+		if err := revoke(client.New(s.APIKey, s.BaseURL, s.ProjectID, s.EnvID), s.APIKey, func() { wsCfg.Shared = nil }); err != nil {
+			return revoked, err
+		}
 	}
-	return own.ID, nil
+	return revoked, nil
 }

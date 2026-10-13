@@ -134,7 +134,7 @@ var toolDefs = []ToolDef{
 	},
 	{
 		Name:        "airstrings_status",
-		Description: "Workspace status, same as `airstrings status`: project, active environment, key scope (read/write), protection of every environment (protected/open) and the one next step for this state.",
+		Description: "Workspace status, same as `airstrings status`: project, active environment, key scope (read/write), protection of every environment (protected/open), the keys stored in this workspace (masked; `airstrings apikey revoke` removes them) and the one next step for this state.",
 		InputSchema: InputSchema{Type: "object", Properties: map[string]Property{}},
 	},
 	{
@@ -974,6 +974,7 @@ func handleToolStatus(json.RawMessage) *CallToolResult {
 		"key_source":        auth.Source,
 		"full_power":        auth.FullPower(),
 		"hint":              d.Hint,
+		"stored_keys":       wsCfg.MaskedStoredKeys(),
 	})
 	return textResult(string(out))
 }

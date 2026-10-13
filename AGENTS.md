@@ -90,7 +90,7 @@ picks one, `airstrings project ls` lists them. Legacy 64-hex environment keys
 keep working for their one environment.
 
 Confirm what you're pointed at any time: `airstrings status --json` →
-`{source, project_id, env_id, base_url, protection, key_scope, key_type, key_source, full_power, hint, environments[...], mode, workspace_dir}`.
+`{source, project_id, env_id, base_url, protection, key_scope, key_type, key_source, full_power, hint, stored_keys[...], environments[...], mode, workspace_dir}`. `stored_keys` lists the masked keys in `.airstrings/config.json` (what `apikey revoke` removes); `[]` when the workspace uses the login.
 `source` is `"workspace"` or `"env"`. `protection` is `"protected"` (production
 rejects direct writes — changes reach it only by promotion), `"open"` (production
 accepts direct publishing), or `"unknown"`. `key_scope` is `"read"`, `"write"` or

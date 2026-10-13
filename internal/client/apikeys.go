@@ -12,6 +12,8 @@ type APIKey struct {
 	Prefix     string     `json:"prefix"`
 	LastUsedAt *time.Time `json:"last_used_at"`
 	CreatedAt  string     `json:"created_at"`
+
+	InWorkspace bool `json:"in_workspace"`
 }
 
 type APIKeyList struct {

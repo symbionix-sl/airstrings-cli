@@ -72,7 +72,7 @@ airstrings login                    # log in again (revokes the previous org key
 airstrings logout                   # revoke and forget the stored org key
 airstrings project ls               # projects of the org (org key)
 airstrings --project <id> status    # run against another project (org key)
-airstrings apikey ls                # the project's keys
+airstrings apikey ls                # the project's keys (✓ = stored in this workspace)
 airstrings apikey rotate            # rotate the workspace key
 airstrings apikey revoke            # revoke the workspace's stored keys (e.g. after a leak)
 ```

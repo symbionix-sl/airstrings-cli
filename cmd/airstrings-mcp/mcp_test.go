@@ -998,7 +998,7 @@ func TestMCP_ToolCall_StatusAndEnvList(t *testing.T) {
 		return res.Content[0].Text
 	}
 	status := call("airstrings_status")
-	for _, w := range []string{`"key_scope":"write"`, `"protection_by_env":{"production":"protected","staging":"open"}`, `Connected to staging. Production is protected.`, `/projects/proj_test/env/env_prod/promote`} {
+	for _, w := range []string{`"key_scope":"write"`, `"protection_by_env":{"production":"protected","staging":"open"}`, `Connected to staging. Production is protected.`, `/projects/proj_test/env/env_prod/promote`, `"stored_keys":["****"]`} {
 		if !strings.Contains(status, w) {
 			t.Errorf("status missing %s:\n%s", w, status)
 		}

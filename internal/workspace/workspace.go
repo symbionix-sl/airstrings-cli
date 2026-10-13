@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
@@ -45,6 +46,33 @@ type WorkspaceConfig struct {
 	BundlesDir  string            `json:"bundles_dir,omitempty"`
 	Credentials []Credential      `json:"credentials"`
 	Shared      *SharedCredential `json:"shared,omitempty"`
+}
+
+// StoredKeys returns the distinct API keys stored in config.json, including
+// the shared-bucket key.
+func (c *WorkspaceConfig) StoredKeys() []string {
+	var keys []string
+	add := func(k string) {
+		if k != "" && !slices.Contains(keys, k) {
+			keys = append(keys, k)
+		}
+	}
+	for _, cred := range c.Credentials {
+		add(cred.APIKey)
+	}
+	if c.Shared != nil {
+		add(c.Shared.APIKey)
+	}
+	return keys
+}
+
+// MaskedStoredKeys is StoredKeys masked for display; never nil.
+func (c *WorkspaceConfig) MaskedStoredKeys() []string {
+	masked := []string{}
+	for _, k := range c.StoredKeys() {
+		masked = append(masked, client.MaskKey(k))
+	}
+	return masked
 }
 
 // ActiveCredential returns the credential matching the active environment.

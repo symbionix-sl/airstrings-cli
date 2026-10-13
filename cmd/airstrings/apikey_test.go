@@ -144,3 +144,82 @@ func TestAPIKeyRevokeLoginModeIsUsageError(t *testing.T) {
 		t.Errorf("exit = %d\nstderr: %s", code, stderr)
 	}
 }
+
+func TestAPIKeyRevokeAlsoRevokesSharedBucketKey(t *testing.T) {
+	var deleted []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == "GET" && r.URL.Path == "/v1/projects/proj_test/api-keys":
+			w.Write([]byte(`{"data":[{"id":"ak_self","prefix":"as_proj_oldkey_0"}]}`))
+		case r.Method == "GET" && r.URL.Path == "/v1/projects/proj_shared/api-keys":
+			w.Write([]byte(`{"data":[{"id":"ak_shared","prefix":"as_proj_shared_0"}]}`))
+		case r.Method == "DELETE":
+			deleted = append(deleted, r.URL.Path)
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+	dir := t.TempDir()
+	os.MkdirAll(filepath.Join(dir, ".airstrings"), 0700)
+	cfg := `{"project_id":"proj_test","project_name":"T","active_env":"env_p","credentials":[` +
+		`{"api_key":"as_proj_oldkey_0001","base_url":"` + srv.URL + `","env_id":"env_p","env_name":"production"}],` +
+		`"shared":{"api_key":"as_proj_shared_0002","base_url":"` + srv.URL + `","project_id":"proj_shared","env_id":"env_sh"}}`
+	os.WriteFile(filepath.Join(dir, ".airstrings", "config.json"), []byte(cfg), 0600)
+
+	code, stdout, stderr := runSharedInDir(t, dir, nil, "apikey", "revoke")
+	want := "/v1/projects/proj_test/api-keys/ak_self,/v1/projects/proj_shared/api-keys/ak_shared"
+	if code != 0 || strings.Join(deleted, ",") != want || !strings.Contains(stdout, "ak_self, ak_shared") {
+		t.Fatalf("exit = %d, deleted %v\nstdout: %s\nstderr: %s", code, deleted, stdout, stderr)
+	}
+	if c := readSharedConfig(t, dir); c.Credentials[0].APIKey != "" || c.Shared != nil {
+		t.Errorf("config = %+v", c)
+	}
+}
+
+func TestAPIKeyLsMarksWorkspaceKey(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/projects/proj_test/environments" {
+			w.Write([]byte(`{"data":[]}`))
+			return
+		}
+		w.Write([]byte(`{"data":[{"id":"ak_mine","name":"Mine","scope":"project","prefix":"as_proj_mine_000"},` +
+			`{"id":"ak_ci","name":"CI","scope":"project","prefix":"as_proj_ci_00000"}]}`))
+	}))
+	defer srv.Close()
+	dir := t.TempDir()
+	writeWorkspace(t, dir, "as_proj_mine_0001_secret", srv.URL)
+
+	code, stdout, stderr := runSharedInDir(t, dir, nil, "apikey", "ls")
+	lines := strings.Split(stdout, "\n")
+	if code != 0 || !strings.Contains(stdout, "IN WORKSPACE") || len(lines) < 4 ||
+		!strings.Contains(lines[2], "ak_mine") || !strings.HasSuffix(strings.TrimSpace(lines[2]), "✓") ||
+		strings.Contains(lines[3], "✓") {
+		t.Fatalf("exit = %d\nstdout: %s\nstderr: %s", code, stdout, stderr)
+	}
+	_, stdout, _ = runSharedInDir(t, dir, nil, "apikey", "ls", "--json")
+	if !strings.Contains(stdout, `"in_workspace": true`) || !strings.Contains(stdout, `"in_workspace": false`) {
+		t.Errorf("json: %s", stdout)
+	}
+}
+
+func TestStatusShowsStoredKeys(t *testing.T) {
+	dir := t.TempDir()
+	writeWorkspace(t, dir, "as_proj_mine_0001_secret", "http://127.0.0.1:1")
+	_, stdout, stderr := runSharedInDir(t, dir, nil, "status")
+	if !strings.Contains(stdout, "Stored:   as_proj_mine...cret (apikey revoke removes them)") {
+		t.Errorf("stdout: %s\nstderr: %s", stdout, stderr)
+	}
+	_, stdout, _ = runSharedInDir(t, dir, nil, "status", "--json")
+	if !strings.Contains(stdout, `"stored_keys": [`) || !strings.Contains(stdout, `"as_proj_mine...cret"`) {
+		t.Errorf("json: %s", stdout)
+	}
+
+	login := t.TempDir()
+	writeWorkspace(t, login, "", "http://127.0.0.1:1")
+	_, stdout, _ = runSharedInDir(t, login, nil, "status", "--json")
+	if !strings.Contains(stdout, `"stored_keys": []`) {
+		t.Errorf("login json: %s", stdout)
+	}
+}

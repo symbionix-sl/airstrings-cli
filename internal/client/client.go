@@ -34,6 +34,14 @@ func KeyType(key string) string {
 	return "environment"
 }
 
+// MaskKey shows enough of a key to recognise it without exposing it.
+func MaskKey(key string) string {
+	if len(key) < 20 {
+		return "****"
+	}
+	return key[:12] + "..." + key[len(key)-4:]
+}
+
 // Client is the AirStrings API client.
 type Client struct {
 	baseURL    string
