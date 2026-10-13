@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.22.1] - 2026-10-13
+
+### Fixed
+
+- `apikey revoke` removes stored keys the API already rejects (401) instead of failing, so a workspace holding revoked keys can be cleaned in one command. Other errors keep the key. `--json` adds `removed_dead_keys`.
+
 ## [0.22.0] - 2026-10-13
 
 ### Added

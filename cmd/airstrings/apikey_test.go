@@ -223,3 +223,41 @@ func TestStatusShowsStoredKeys(t *testing.T) {
 		t.Errorf("login json: %s", stdout)
 	}
 }
+
+func TestAPIKeyRevokeRemovesDeadKeys(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "GET" {
+			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+		w.WriteHeader(http.StatusUnauthorized)
+		w.Write([]byte(`{"error":{"code":"unauthorized","message":"Invalid API key"}}`))
+	}))
+	defer srv.Close()
+	dir := t.TempDir()
+	writeWorkspace(t, dir, "as_proj_dead_0001_secret", srv.URL)
+
+	code, stdout, stderr := runSharedInDir(t, dir, nil, "apikey", "revoke")
+	if code != 0 || !strings.Contains(stdout, "Removed 1 key(s) that no longer work") {
+		t.Fatalf("exit = %d\nstdout: %s\nstderr: %s", code, stdout, stderr)
+	}
+	if c := readSharedConfig(t, dir); c.Credentials[0].APIKey != "" || c.Credentials[1].APIKey != "" {
+		t.Errorf("credentials = %+v", c.Credentials)
+	}
+}
+
+func TestAPIKeyRevokeKeepsKeyOnOtherErrors(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(`{"error":{"code":"internal_error","message":"boom"}}`))
+	}))
+	defer srv.Close()
+	dir := t.TempDir()
+	writeWorkspace(t, dir, "as_proj_live_0001_secret", srv.URL)
+
+	if code, _, _ := runSharedInDir(t, dir, nil, "apikey", "revoke"); code == 0 {
+		t.Fatal("expected failure")
+	}
+	if c := readSharedConfig(t, dir); c.Credentials[0].APIKey != "as_proj_live_0001_secret" {
+		t.Errorf("key must stay when the API did not confirm it is dead: %+v", c.Credentials)
+	}
+}

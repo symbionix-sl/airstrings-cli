@@ -1,7 +1,9 @@
 package workspace
 
 import (
+	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 
 	"github.com/symbionix-sl/airstrings-cli/internal/client"
@@ -108,21 +110,28 @@ func findOwnKey(c *client.Client, apiKey string) (*client.APIKey, error) {
 
 // RevokeStoredKeys revokes every key stored in config.json (environment
 // credentials and the shared-bucket key), clearing each one as it goes so the
-// workspace falls back to the login key. It returns the revoked key IDs.
-func RevokeStoredKeys(wsDir string, wsCfg *WorkspaceConfig) ([]string, error) {
+// workspace falls back to the login key. A key the API already rejects (401)
+// is only cleared. It returns the revoked key IDs and the number of dead keys.
+func RevokeStoredKeys(wsDir string, wsCfg *WorkspaceConfig) ([]string, int, error) {
 	var revoked []string
+	dead := 0
 	revoke := func(c *client.Client, key string, clear func()) error {
 		own, err := findOwnKey(c, key)
-		if err != nil {
+		var apiErr *client.APIError
+		switch {
+		case errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusUnauthorized:
+			dead++
+		case err != nil:
 			return err
+		default:
+			if err := c.RevokeAPIKey(own.ID); err != nil {
+				return err
+			}
+			revoked = append(revoked, own.ID)
 		}
-		if err := c.RevokeAPIKey(own.ID); err != nil {
-			return err
-		}
-		revoked = append(revoked, own.ID)
 		clear()
 		if err := SaveConfig(wsDir, wsCfg); err != nil {
-			return fmt.Errorf("save config: %w — key %s is already revoked; remove it from config.json by hand", err, own.ID)
+			return fmt.Errorf("save config: %w — the key no longer works; remove it from config.json by hand", err)
 		}
 		return nil
 	}
@@ -139,13 +148,13 @@ func RevokeStoredKeys(wsDir string, wsCfg *WorkspaceConfig) ([]string, error) {
 			}
 		})
 		if err != nil {
-			return revoked, err
+			return revoked, dead, err
 		}
 	}
 	if s := wsCfg.Shared; s != nil && s.APIKey != "" {
 		if err := revoke(client.New(s.APIKey, s.BaseURL, s.ProjectID, s.EnvID), s.APIKey, func() { wsCfg.Shared = nil }); err != nil {
-			return revoked, err
+			return revoked, dead, err
 		}
 	}
-	return revoked, nil
+	return revoked, dead, nil
 }

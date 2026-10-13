@@ -358,7 +358,8 @@ Flags:
   apikey rotate   Rotate the workspace key. A project key is revoked and
                   replaced in one call
   apikey revoke   Revoke every key stored in this workspace and remove them
-                  from config.json. The workspace then uses your login key.
+                  from config.json (keys that no longer work are just removed).
+                  The workspace then uses your login key.
                   Other keys can only be revoked by an owner in the dashboard
 
 Flags:
@@ -1501,15 +1502,20 @@ func handleAPIKeyRevoke(args []string) {
 		output.FailNext(output.ExitUsage, "nothing to revoke: this workspace uses your login key, not a stored key",
 			"To revoke your login key run: airstrings logout")
 	}
-	revoked, err := workspace.RevokeStoredKeys(wsDir, wsCfg)
+	revoked, dead, err := workspace.RevokeStoredKeys(wsDir, wsCfg)
 	if err != nil {
 		failAPI("revoke key", err)
 	}
 	if output.JSONMode {
-		output.JSON(map[string][]string{"revoked_key_ids": revoked})
+		output.JSON(map[string]any{"revoked_key_ids": revoked, "removed_dead_keys": dead})
 		return
 	}
-	output.Success(fmt.Sprintf("Revoked %s; removed from this workspace", strings.Join(revoked, ", ")))
+	if len(revoked) > 0 {
+		output.Success(fmt.Sprintf("Revoked %s; removed from this workspace", strings.Join(revoked, ", ")))
+	}
+	if dead > 0 {
+		output.Success(fmt.Sprintf("Removed %d key(s) that no longer work from this workspace", dead))
+	}
 }
 
 // --- String commands ---
