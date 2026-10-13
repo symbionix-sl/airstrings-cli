@@ -197,3 +197,20 @@ func TestSetup_NoKeyIsErrNoKey(t *testing.T) {
 		t.Fatalf("err = %v, want ErrNoKey", err)
 	}
 }
+
+func TestSetup_KeepsExistingSectionStrings(t *testing.T) {
+	srv := httptest.NewServer(&setupAPI{t: t})
+	t.Cleanup(srv.Close)
+	dir := t.TempDir()
+	csv := CSVPath(filepath.Join(dir, DirName), "onboarding")
+	os.MkdirAll(filepath.Dir(csv), 0700)
+	local := "key,locale,value,format\nonboarding.title,en,Welcome,text\n"
+	os.WriteFile(csv, []byte(local), 0600)
+
+	if _, err := Setup(dir, SetupOptions{APIKey: "as_org_k", Project: "mobile-app", BaseURL: srv.URL}); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := os.ReadFile(csv); string(got) != local {
+		t.Errorf("local strings overwritten:\n%s", got)
+	}
+}

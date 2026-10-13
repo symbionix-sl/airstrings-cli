@@ -461,7 +461,11 @@ func CreateSectionDir(wsDir, name string) error {
 	if err := ValidateSectionName(name); err != nil {
 		return err
 	}
-	return WriteCSV(CSVPath(wsDir, name), nil)
+	path := CSVPath(wsDir, name)
+	if _, err := os.Stat(path); err == nil {
+		return nil
+	}
+	return WriteCSV(path, nil)
 }
 
 // ValidateSectionName checks that a section name is safe for filesystem use.
