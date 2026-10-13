@@ -74,6 +74,7 @@ airstrings project ls               # projects of the org (org key)
 airstrings --project <id> status    # run against another project (org key)
 airstrings apikey ls                # the project's keys
 airstrings apikey rotate            # rotate the workspace key
+airstrings apikey revoke            # revoke the workspace's stored keys (e.g. after a leak)
 ```
 
 ### Environments

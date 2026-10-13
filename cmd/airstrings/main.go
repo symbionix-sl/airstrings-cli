@@ -167,6 +167,7 @@ Navigation:
 API keys:
   apikey ls                             List the project's keys
   apikey rotate [--env <name>]          Rotate the workspace API key
+  apikey revoke                         Revoke the workspace's stored keys
 
 Strings:
   strings ls [--local] [--section <name>] [--locale <loc>]
@@ -349,14 +350,17 @@ Show current project info. 'project ls' lists the org's projects (org key).
 Flags:
   --url, --base-url <url>   API base URL (env add)
 `,
-	"apikey": `Usage: airstrings apikey <ls|rotate> [--env <name>]
+	"apikey": `Usage: airstrings apikey <ls|rotate|revoke> [--env <name>]
 
   apikey ls       List the project's keys (scope, permission, prefix)
   apikey rotate   Rotate the workspace key. A project key is revoked and
                   replaced in one call
+  apikey revoke   Revoke every key stored in this workspace and remove them
+                  from config.json. The workspace then uses your login key.
+                  Other keys can only be revoked by an owner in the dashboard
 
 Flags:
-  --env <name>              Rotate the key for a specific environment
+  --env <name>              Rotate the key of a specific environment
                             (default: active environment)
 `,
 	"strings": `Usage: airstrings strings <ls|get|set|rm> [options]
@@ -1365,8 +1369,10 @@ func handleAPIKey(args []string) {
 		handleAPIKeyLs(args[1:])
 	case len(args) > 0 && args[0] == "rotate":
 		handleAPIKeyRotate(args[1:])
+	case len(args) > 0 && args[0] == "revoke":
+		handleAPIKeyRevoke(args[1:])
 	default:
-		output.Fail(output.ExitUsage, "usage: airstrings apikey <ls|rotate>")
+		output.Fail(output.ExitUsage, "usage: airstrings apikey <ls|rotate|revoke>")
 	}
 }
 
@@ -1403,7 +1409,7 @@ func maskKey(key string) string {
 	return key[:12] + "..." + key[len(key)-4:]
 }
 
-func handleAPIKeyRotate(args []string) {
+func apiKeyCredential(args []string) (string, *workspace.WorkspaceConfig, *workspace.Credential) {
 	envName := ""
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
@@ -1440,6 +1446,11 @@ func handleAPIKeyRotate(args []string) {
 		}
 	}
 
+	return wsDir, wsCfg, cred
+}
+
+func handleAPIKeyRotate(args []string) {
+	wsDir, wsCfg, cred := apiKeyCredential(args)
 	if cred.APIKey == "" {
 		output.FailNext(output.ExitUsage, "nothing to rotate: this workspace uses your login key, not a stored project key",
 			fmt.Sprintf("Create a project key at %s/projects/%s/api-keys, then run: airstrings init <key>", client.DashboardBase(cred.BaseURL), wsCfg.ProjectID))
@@ -1467,6 +1478,36 @@ func handleAPIKeyRotate(args []string) {
 		output.Success(fmt.Sprintf("Rotated API key for %s — new key %s (old key %s revoked)", cred.EnvName, masked, result.OldKeyID))
 	} else {
 		output.Success(fmt.Sprintf("Rotated API key for %s — new key %s", cred.EnvName, masked))
+	}
+}
+
+func handleAPIKeyRevoke(args []string) {
+	if len(args) > 0 {
+		output.Fail(output.ExitUsage, "usage: airstrings apikey revoke")
+	}
+	wsDir, wsCfg := mustWorkspace()
+	var revoked []string
+	for i := range wsCfg.Credentials {
+		cred := &wsCfg.Credentials[i]
+		if cred.APIKey == "" {
+			continue
+		}
+		masked := maskKey(cred.APIKey)
+		id, err := workspace.RevokeKey(wsDir, wsCfg, cred)
+		if err != nil {
+			failAPI("revoke key", err)
+		}
+		revoked = append(revoked, id)
+		if !output.JSONMode {
+			output.Success(fmt.Sprintf("Revoked key %s (%s) and removed it from this workspace", masked, id))
+		}
+	}
+	if len(revoked) == 0 {
+		output.FailNext(output.ExitUsage, "nothing to revoke: this workspace uses your login key, not a stored key",
+			"To revoke your login key run: airstrings logout")
+	}
+	if output.JSONMode {
+		output.JSON(map[string][]string{"revoked_key_ids": revoked})
 	}
 }
 

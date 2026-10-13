@@ -24,20 +24,9 @@ func RotateKey(wsDir string, wsCfg *WorkspaceConfig, cred *Credential) (*RotateR
 		return rotateProjectKey(wsDir, wsCfg, oldClient, cred.APIKey)
 	}
 
-	list, err := oldClient.ListAPIKeys()
+	own, err := findOwnKey(oldClient, cred.APIKey)
 	if err != nil {
-		return nil, fmt.Errorf("list API keys: %w", err)
-	}
-
-	var own *client.APIKey
-	for i := range list.Data {
-		if list.Data[i].Prefix != "" && strings.HasPrefix(cred.APIKey, list.Data[i].Prefix) {
-			own = &list.Data[i]
-			break
-		}
-	}
-	if own == nil {
-		return nil, fmt.Errorf("could not identify the workspace API key among this environment's keys — rotate it via the dashboard instead")
+		return nil, err
 	}
 	if own.Permission != "write" {
 		return nil, fmt.Errorf("cannot rotate a read-only key — write permission required to create keys")
@@ -102,4 +91,40 @@ func rotateProjectKey(wsDir string, wsCfg *WorkspaceConfig, c *client.Client, ol
 		return nil, fmt.Errorf("save config: %w — the old key is already revoked; create a new project key in the dashboard", err)
 	}
 	return &RotateResult{NewKeyID: newKey.ID, NewKeyPrefix: newKey.Prefix, Revoked: true}, nil
+}
+
+func findOwnKey(c *client.Client, apiKey string) (*client.APIKey, error) {
+	list, err := c.ListAPIKeys()
+	if err != nil {
+		return nil, fmt.Errorf("list API keys: %w", err)
+	}
+	for i := range list.Data {
+		if list.Data[i].Prefix != "" && strings.HasPrefix(apiKey, list.Data[i].Prefix) {
+			return &list.Data[i], nil
+		}
+	}
+	return nil, fmt.Errorf("could not identify the workspace API key among the project's keys — revoke it via the dashboard instead")
+}
+
+// RevokeKey revokes the credential's key on the server and clears it from every
+// credential holding it, so the workspace falls back to the login key.
+func RevokeKey(wsDir string, wsCfg *WorkspaceConfig, cred *Credential) (string, error) {
+	key := cred.APIKey
+	c := client.New(key, cred.BaseURL, wsCfg.ProjectID, cred.EnvID)
+	own, err := findOwnKey(c, key)
+	if err != nil {
+		return "", err
+	}
+	if err := c.RevokeAPIKey(own.ID); err != nil {
+		return "", fmt.Errorf("revoke key: %w", err)
+	}
+	for i := range wsCfg.Credentials {
+		if wsCfg.Credentials[i].APIKey == key {
+			wsCfg.Credentials[i].APIKey = ""
+		}
+	}
+	if err := SaveConfig(wsDir, wsCfg); err != nil {
+		return own.ID, fmt.Errorf("save config: %w — key %s is already revoked; remove it from config.json by hand", err, own.ID)
+	}
+	return own.ID, nil
 }

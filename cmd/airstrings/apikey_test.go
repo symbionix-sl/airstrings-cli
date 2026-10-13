@@ -76,3 +76,71 @@ func TestAPIKeyUnknownSubcommandExit2(t *testing.T) {
 		t.Errorf("exit = %d, want 2", code)
 	}
 }
+
+func TestAPIKeyRevokeProjectKeyRevokesSelfAndClearsConfig(t *testing.T) {
+	var deleted string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == "GET" && r.URL.Path == "/v1/projects/proj_test/api-keys":
+			w.Write([]byte(`{"data":[{"id":"ak_other","prefix":"as_proj_otherkey"},{"id":"ak_self","prefix":"as_proj_oldkey_0"}]}`))
+		case r.Method == "DELETE":
+			deleted = r.URL.Path
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+	dir := t.TempDir()
+	writeWorkspace(t, dir, "as_proj_oldkey_0001", srv.URL)
+
+	code, stdout, stderr := runSharedInDir(t, dir, nil, "apikey", "revoke")
+	if code != 0 || deleted != "/v1/projects/proj_test/api-keys/ak_self" || strings.Count(stdout, "Revoked") != 1 {
+		t.Fatalf("exit = %d, deleted %q\nstdout: %s\nstderr: %s", code, deleted, stdout, stderr)
+	}
+	if cfg := readSharedConfig(t, dir); cfg.Credentials[0].APIKey != "" || cfg.Credentials[1].APIKey != "" {
+		t.Errorf("credentials = %+v", cfg.Credentials)
+	}
+}
+
+func TestAPIKeyRevokeLegacyKeysRevokesEveryStoredKey(t *testing.T) {
+	var deleted []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == "GET" && r.URL.Path == "/v1/projects/proj_test/environments/env_p/api-keys":
+			w.Write([]byte(`{"data":[{"id":"ak_prod","prefix":"prodkey1"}]}`))
+		case r.Method == "GET" && r.URL.Path == "/v1/projects/proj_test/environments/env_s/api-keys":
+			w.Write([]byte(`{"data":[{"id":"ak_stg","prefix":"stgkey12"}]}`))
+		case r.Method == "DELETE":
+			deleted = append(deleted, r.URL.Path)
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+	dir := t.TempDir()
+	os.MkdirAll(filepath.Join(dir, ".airstrings"), 0700)
+	cfg := `{"project_id":"proj_test","project_name":"T","active_env":"env_s","credentials":[` +
+		`{"api_key":"prodkey1_secret_0001","base_url":"` + srv.URL + `","env_id":"env_p","env_name":"production"},` +
+		`{"api_key":"stgkey12_secret_0002","base_url":"` + srv.URL + `","env_id":"env_s","env_name":"staging"}]}`
+	os.WriteFile(filepath.Join(dir, ".airstrings", "config.json"), []byte(cfg), 0600)
+
+	code, stdout, stderr := runSharedInDir(t, dir, nil, "apikey", "revoke")
+	want := []string{"/v1/projects/proj_test/environments/env_p/api-keys/ak_prod", "/v1/projects/proj_test/environments/env_s/api-keys/ak_stg"}
+	if code != 0 || strings.Join(deleted, ",") != strings.Join(want, ",") {
+		t.Fatalf("exit = %d, deleted %v\nstdout: %s\nstderr: %s", code, deleted, stdout, stderr)
+	}
+	if c := readSharedConfig(t, dir); c.Credentials[0].APIKey != "" || c.Credentials[1].APIKey != "" {
+		t.Errorf("credentials = %+v", c.Credentials)
+	}
+}
+
+func TestAPIKeyRevokeLoginModeIsUsageError(t *testing.T) {
+	dir := t.TempDir()
+	writeWorkspace(t, dir, "", "https://api.example.com")
+	code, _, stderr := runSharedInDir(t, dir, nil, "apikey", "revoke")
+	if code != 2 || !strings.Contains(stderr, "logout") {
+		t.Errorf("exit = %d\nstderr: %s", code, stderr)
+	}
+}

@@ -153,6 +153,7 @@ airstrings variants promote <key> <name>                # promote the winning va
 airstrings variants rm <key>                            # delete the experiment
 airstrings import csv <file> | status <id>
 airstrings apikey rotate [--env name]
+airstrings apikey revoke                                # revoke the workspace's stored keys (other keys: dashboard)
 ```
 
 ### Paging large lists

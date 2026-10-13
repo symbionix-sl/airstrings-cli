@@ -78,7 +78,7 @@ func TestCLISubprocess(t *testing.T) {
 		{"push help", []string{"push", "--help"}, 0, "Usage: airstrings push [--section <name>]", ""},
 		{"publish help", []string{"publish", "--help"}, 0, "Usage: airstrings publish [locale...]", ""},
 		{"pull help", []string{"pull", "--help"}, 0, "Usage: airstrings pull [--section <name>]", ""},
-		{"apikey help", []string{"apikey", "--help"}, 0, "Usage: airstrings apikey <ls|rotate>", ""},
+		{"apikey help", []string{"apikey", "--help"}, 0, "Usage: airstrings apikey <ls|rotate|revoke>", ""},
 		{"status help", []string{"status", "--help"}, 0, "Usage: airstrings status", ""},
 		{"strings help", []string{"strings", "--help"}, 0, "Usage: airstrings strings <ls|get|set|rm>", ""},
 		{"init help", []string{"init", "--help"}, 0, "Usage: airstrings init [<api-key>] [--org <org-id>] [--name <name>]", ""},

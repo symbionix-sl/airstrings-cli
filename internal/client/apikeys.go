@@ -57,7 +57,7 @@ func (c *Client) CreateAPIKey(req CreateAPIKeyRequest) (*APIKeyCreated, error) {
 
 // RevokeAPIKey immediately revokes an API key by ID.
 func (c *Client) RevokeAPIKey(id string) error {
-	return c.do("DELETE", c.envPath()+"/api-keys/"+id, nil, nil, nil)
+	return c.do("DELETE", c.keysPath()+"/"+id, nil, nil, nil)
 }
 
 // RotateProjectKey replaces the calling project key; the old key stops working.

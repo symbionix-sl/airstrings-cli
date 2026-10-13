@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.21.0] - 2026-10-13
+
+### Added
+
+- `apikey revoke`: revokes every key stored in the workspace on the server and removes them from `config.json`; the workspace then uses your login key. Only keys the workspace holds can be revoked this way; other keys need an owner in the dashboard.
+
+### Fixed
+
+- Revoking a project key (during `apikey revoke`) uses the project key path instead of an environment path.
+
 ## [0.20.0] - 2026-10-08
 
 ### Added
