@@ -76,7 +76,7 @@ When adding a new command:
 
 ### Config
 
-- Stored per-project in `.airstrings/config.json` (no global config)
+- Stored per-project in `.airstrings/config.json`; org logins in `~/.config/airstrings/credentials.json`
 - Workspace is found by walking up from cwd (like `.git`)
 - `init [<api-key>]` creates the workspace; with no key it logs in (org key stored in `~/.config/airstrings/credentials.json`) and creates the project
 - Each workspace is self-contained: credentials, active env, project info
@@ -129,7 +129,7 @@ Configure in Claude Desktop or any MCP client:
 }
 ```
 
-Tools: `airstrings_init`, `airstrings_strings_set`, `airstrings_strings_rm`, `airstrings_strings_ls`, `airstrings_push`, `airstrings_pull`, `airstrings_publish`. `airstrings_strings_set`/`airstrings_strings_rm` accept an optional boolean `push` mirroring the CLI `--push` flag (syncs that single key to the API after the local write).
+Tools: `airstrings_login`, `airstrings_init`, `airstrings_status`, `airstrings_env_list`, `airstrings_strings_set`, `airstrings_strings_rm`, `airstrings_strings_ls`, `airstrings_push`, `airstrings_pull`, `airstrings_publish`, `airstrings_promote_preview`, `airstrings_sdk_config`, `airstrings_variant_set`, `airstrings_variant_start`, `airstrings_variant_stop`, `airstrings_variant_status`, `airstrings_variant_promote`. `airstrings_strings_set`/`airstrings_strings_rm` accept an optional boolean `push` mirroring the CLI `--push` flag (syncs that single key to the API after the local write).
 
 ## Non-Negotiables
 
