@@ -124,7 +124,7 @@ airstrings mcp install --claude-desktop # Claude Desktop
 airstrings mcp status | uninstall
 ```
 
-Other clients: run `airstrings-mcp` over stdio.
+Other clients: run `airstrings-mcp` over stdio. Details: [cmd/airstrings-mcp/README.md](cmd/airstrings-mcp/README.md).
 
 | Tool | Does |
 |---|---|
