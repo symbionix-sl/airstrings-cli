@@ -1234,3 +1234,16 @@ func TestMCP_InitWithOrgLogsInWhenOnlyAnotherOrgIsStored(t *testing.T) {
 		t.Fatalf("init = %+v", res)
 	}
 }
+
+func TestMCP_EveryToolHasConsistentAnnotations(t *testing.T) {
+	for _, tool := range toolDefs {
+		a := tool.Annotations
+		if a == nil {
+			t.Errorf("%s: missing annotations", tool.Name)
+			continue
+		}
+		if a.ReadOnlyHint && a.DestructiveHint {
+			t.Errorf("%s: read-only tool marked destructive", tool.Name)
+		}
+	}
+}

@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.22.3] - 2026-10-15
+
+### Changed
+
+- MCP tool definitions rewritten for agents: every tool now carries MCP annotations (read-only, destructive, idempotent, open-world), says when to use it instead of its siblings, what it returns, and its side effects (protected environments refuse writes, `pull` overwrites unpushed local edits, `push` never deletes server-only keys, variant start/stop reach apps on the next publish, a stopped experiment cannot restart). Glama TDQS 3.6 → 4.6.
+
 ## [0.22.2] - 2026-10-13
 
 ### Fixed
