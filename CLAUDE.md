@@ -23,15 +23,26 @@ internal/
   bundlepull/               # bundles pull: download, verify, mirror, manifest
     bundlepull.go           # Pull flow, Ed25519 + canonical JSON verification
   client/                   # HTTP API client (zero external deps)
-    client.go               # Base client, request/response, error handling
+    client.go               # Base client, request/response, error handling, MaskKey
     projects.go             # Project, environment, locale, bundle operations
     strings.go              # String CRUD, sections, ListAllStrings
     imports.go              # CSV import, status polling
+    apikeys.go              # API key list/create/rotate/revoke
+    cliauth.go              # Login endpoints (device code, loopback grant), org key revoke, GET /v1/org
+    promotions.go           # Promote preview/apply
+    variants.go             # A/B experiments
+  doctor/                   # doctor: bundled-fallback integration checks + ignore list
+  guide/                    # Environment-guidance wording + SDK snippets shared by CLI and MCP
   output/                   # Terminal output (table, JSON, errors)
     output.go               # Table via tabwriter, JSON mode, Success/Errorf
   workspace/                # Workspace management (.airstrings/ folder)
     csv.go                  # Pure CSV read/write/edit operations
     workspace.go            # Init, Find, LoadConfig, credentials, ResolveClient
+    setup.go                # Setup: shared by CLI init and MCP airstrings_init
+    resolve.go              # Key precedence (ResolveAuth, OrgAuth, Resolve), --project
+    login.go                # Browser login: device-code polling + 127.0.0.1 loopback listener
+    credstore.go            # ~/.config/airstrings/credentials.json (org keys)
+    rotate.go               # Workspace key rotation
     sync.go                 # Push/pull + single-key push helpers (bridges local CSVs and API client)
 ```
 
@@ -45,8 +56,8 @@ All command handlers live in `main.go`. No command framework — plain `switch` 
 - **Zero external dependencies.** stdlib only. Do not add third-party packages
 - **No interfaces unless you need two implementations.** Concrete types everywhere
 - **Errors exit immediately** via `output.Errorf()` which prints to stderr and calls `os.Exit(1)`
-- **No global state** except `output.JSONMode` (set once at startup from `--json` flag)
-- **No context.Context yet.** Add when needed (timeouts, cancellation), not before
+- **No global state** except `output.JSONMode` and `workspace.ProjectFlag` (set once at startup from `--json` / `--project`)
+- **context.Context only where needed** (cancellation in `bundlepull`). Don't thread it through elsewhere
 
 ### Command Pattern
 
@@ -64,7 +75,7 @@ When adding a new command:
 1. Add the case to the `switch` in `main()`
 2. Write a `handleX(args []string)` function in `main.go`
 3. Add the API method to the appropriate file in `internal/client/`
-4. Add usage line to `printUsage()`
+4. Add usage line to `printUsage()` and an entry to `commandHelp` (per-command `--help`)
 
 ### API Client
 
@@ -97,6 +108,7 @@ Local workspace for AI-friendly string management. Initialized via `airstrings i
 ```
 .airstrings/                  # Created by `airstrings init` in project root
   config.json                 # Workspace config (credentials, project, active env)
+  .gitignore                  # Ignores config.json and doctor.json
   doctor.json                 # Ignored doctor checks (optional, written by doctor's interactive prompt)
   strings.csv                 # Unsectioned strings (flat mode)
   home/home.csv               # Section "home" strings
@@ -133,10 +145,10 @@ Tools: `airstrings_login`, `airstrings_init`, `airstrings_status`, `airstrings_e
 
 ## Non-Negotiables
 
-1. **No secrets in source.** API keys only in `.airstrings/config.json` (0600). Never log or print full keys — show first 8 and last 4 chars only
+1. **No secrets in source.** API keys only in `.airstrings/config.json` (0600). Never log or print full keys — use `client.MaskKey` (first 12 + last 4 chars)
 2. **No external dependencies.** stdlib is sufficient for this CLI. If you think you need a dep, you're wrong
 3. **No command framework.** The switch-based routing is deliberate. It keeps the binary small and the code greppable
-4. **Exit on error.** Handlers do not return errors. `output.Errorf()` (exit 1) and `output.Fail(code, ...)` are the error paths. Exit codes: 1 generic, 2 usage, 3 auth, 4 not-found, 5 network, 6 rate-limited. Classify API/network failures with `failAPI()`; use `output.Fail(output.ExitUsage, ...)` for bad input. `output.Check`/`Success` drop ANSI when stdout is not a TTY or `NO_COLOR` is set
+4. **Exit on error.** Handlers do not return errors. `output.Errorf()` (exit 1) and `output.Fail(code, ...)` are the error paths. Exit codes (`output.Exit*`): 1 generic, 2 usage, 3 auth, 4 not-found, 5 network, 6 rate-limited, 7 environment protected, 8 plan limit, 9 login pending. `output.FailNext` adds the one next step. Classify API/network failures with `failAPI()`; use `output.Fail(output.ExitUsage, ...)` for bad input. `output.Check`/`Success` drop ANSI when stdout is not a TTY or `NO_COLOR` is set
 5. **Validate at boundaries.** Check args before calling the API client. The API provides structured errors for everything else
 6. **Config permissions matter.** Dir: 0700, files: 0600. The config contains API keys
 
